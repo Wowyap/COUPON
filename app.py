@@ -3,126 +3,204 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import re
 from datetime import datetime, timedelta
+import io
+import smtplib
+from email.mime.text import MIMEText
 
-# --- 1. הגדרות עיצוב ---
-PASSWORD = "3430"
-GLOBAL_FONT_SIZE = "20px" 
-
-LOGOS = {
-    "רמי לוי": "https://upload.wikimedia.org/wikipedia/he/thumb/6/6a/Rami_Levy_logo.svg/250px-Rami_Levy_logo.svg.png",
-    "Dream Card": "https://www.just4u.co.il/Pictures/12621111.jpg",
-    "ויקטורי": "https://upload.wikimedia.org/wikipedia/he/c/c9/Victory_Supermarket_Chain_Logo.png",
-}
-DEFAULT_LOGO = "https://cdn-icons-png.flaticon.com/512/726/726476.png"
-
+# ----------------- הגדרות כלליות -----------------
 st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
-st.markdown(f"""
-    <style>
-    html, body, [class*="st-"], p, div, span, input, label, button {{
-        font-size: {GLOBAL_FONT_SIZE} !important;
-    }}
-    code {{ font-size: {GLOBAL_FONT_SIZE} !important; }}
-    </style>
-    """, unsafe_allow_html=True)
+GLOBAL_FONT_SIZE = "18px"
 
-# --- 2. פונקציות עזר ---
+st.markdown(f"""
+<style>
+html, body, [class*="st-"] {{
+    font-size: {GLOBAL_FONT_SIZE};
+    direction: rtl;
+    text-align: right;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+# ----------------- פונקציות עזר -----------------
 def clean_data(df):
     for col in df.columns:
-        df[col] = df[col].astype(str).replace(r'\.0$', '', regex=True).replace('nan', '')
+        df[col] = df[col].astype(str).replace("nan", "")
     return df
 
-def parse_expiry(date_str):
-    if not date_str or date_str in ["", "None", "nan"]: return datetime.max
-    formats = ["%d/%m/%Y", "%d/%m/%y", "%m/%y", "%m/%Y", "%Y-%m-%d"]
-    for fmt in formats:
-        try: return datetime.strptime(date_str, fmt)
-        except: continue
+def parse_expiry(val):
+    if not val:
+        return datetime.max
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%m/%Y", "%m/%y"):
+        try:
+            return datetime.strptime(val, fmt)
+        except:
+            pass
     return datetime.max
 
 def parse_amount(val):
     try:
-        val = str(val).lower().replace('₪', '').strip()
-        if 'x' in val:
-            parts = val.split('x')
-            return float(parts[0]) * float(parts[1])
-        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", val)
-        return float(numbers[0]) if numbers else 0.0
-    except: return 0.0
+        nums = re.findall(r"\d+\.?\d*", str(val))
+        return float(nums[0]) if nums else 0.0
+    except:
+        return 0.0
 
-@st.dialog("ערוך קופון ✏️")
-def edit_coupon_dialog(index, row_data, df, conn):
-    with st.form("edit_form"):
-        st.markdown(f"### עריכה: **{row_data['network']}**")
-        new_net = st.text_input("שם הרשת", value=row_data['network'])
-        new_val = st.text_input("ערך", value=row_data['value'])
-        new_type = st.selectbox("סוג", ["Link", "Code", "Credit Card"], 
-                               index=["Link", "Code", "Credit Card"].index(row_data['type']) if row_data['type'] in ["Link", "Code", "Credit Card"] else 0)
-        new_code = st.text_input("קוד/קישור", value=row_data['code_or_link'])
-        new_exp = st.text_input("תוקף", value=row_data['expiry'])
-        new_cvv = st.text_input("CVV", value=row_data['cvv'])
-        new_notes = st.text_area("הערות", value=row_data['notes'])
-        if st.form_submit_button("💾 שמור"):
-            df.at[index, 'network'] = new_net
-            df.at[index, 'value'] = new_val
-            df.at[index, 'type'] = new_type
-            df.at[index, 'code_or_link'] = new_code
-            df.at[index, 'expiry'] = new_exp
-            df.at[index, 'cvv'] = new_cvv
-            df.at[index, 'notes'] = new_notes
-            conn.update(worksheet="Sheet1", data=df)
-            st.rerun()
-
-def check_password():
-    if "authenticated" not in st.session_state: st.session_state.authenticated = False
-    if not st.session_state.authenticated:
-        st.title("🔒 Login")
-        pwd = st.text_input("Password:", type="password")
-        if st.button("Enter"):
-            if pwd == PASSWORD:
-                st.session_state.authenticated = True
-                st.rerun()
-            else: st.error("Wrong password")
+# ----------------- מייל -----------------
+def send_expiry_email(df):
+    if not st.session_state.email_enabled:
         return False
+
+    today = datetime.today().date()
+    alerts = []
+
+    for _, row in df.iterrows():
+        exp = parse_expiry(row["expiry"]).date()
+        days_left = (exp - today).days
+
+        if days_left in st.session_state.alert_days:
+            alerts.append(
+                f"- {row['network']} | {row['value']} | פג בעוד {days_left} ימים ({row['expiry']})"
+            )
+
+    if not alerts:
+        return False
+
+    body = "התראות תוקף לקופונים:\n\n" + "\n".join(alerts)
+
+    msg = MIMEText(body, _charset="utf-8")
+    msg["Subject"] = "⏰ התראת תוקף קופונים"
+    msg["From"] = st.secrets["EMAIL_USER"]
+    msg["To"] = st.session_state.email_recipient
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(
+            st.secrets["EMAIL_USER"],
+            st.secrets["EMAIL_PASSWORD"]
+        )
+        server.send_message(msg)
+
     return True
 
-# --- 3. הרצה ---
-if check_password():
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df = clean_data(conn.read(worksheet="Sheet1", ttl="0"))
+# ----------------- חיבור ל־Google Sheets -----------------
+conn = st.connection("gsheets", type=GSheetsConnection)
+df = clean_data(conn.read(worksheet="Sheet1", ttl=0))
 
+# ----------------- Sidebar -----------------
+st.sidebar.title("⚙️ ניווט והגדרות")
+
+page = st.sidebar.radio("עבור אל:", ["הארנק שלי", "הוספה ידנית"])
+
+st.sidebar.markdown("### 🔎 חיפוש וסינון")
+search_text = st.sidebar.text_input("חיפוש חופשי")
+type_filter = st.sidebar.multiselect(
+    "סוג קופון",
+    options=df["type"].unique(),
+    default=list(df["type"].unique())
+)
+
+st.sidebar.markdown("### 📧 הגדרות התראות מייל")
+
+st.session_state.email_enabled = st.sidebar.checkbox(
+    "הפעל התראות מייל", value=True
+)
+
+st.session_state.email_recipient = st.sidebar.text_input(
+    "שלח התראות אל:",
+    value="eyalicohen@gmail.com"
+)
+
+st.session_state.alert_days = st.sidebar.multiselect(
+    "שלח התראה לפני:",
+    options=[14, 7, 1],
+    default=[14, 7, 1],
+    format_func=lambda x: f"{x} ימים"
+)
+
+# ----------------- עמוד הוספה -----------------
+if page == "הוספה ידנית":
+    st.header("➕ הוספת קופון")
+
+    with st.form("add_coupon"):
+        net = st.text_input("רשת")
+        val = st.text_input("ערך")
+        typ = st.selectbox("סוג", ["Link", "Code", "Credit Card"])
+        exp = st.text_input("תוקף")
+        code = st.text_input("קוד / קישור")
+        notes = st.text_area("הערות")
+
+        if st.form_submit_button("💾 שמור"):
+            new_row = pd.DataFrame([{
+                "network": net,
+                "value": val,
+                "type": typ,
+                "expiry": exp,
+                "code_or_link": code,
+                "notes": notes
+            }])
+            conn.update(
+                worksheet="Sheet1",
+                data=pd.concat([df, new_row], ignore_index=True)
+            )
+            st.success("הקופון נוסף")
+            st.rerun()
+
+# ----------------- הארנק -----------------
+if page == "הארנק שלי":
     st.title("🎫 My Coupon Wallet")
-    
-    # תפריט צד
-    action = st.sidebar.radio("עבור אל:", ["הארנק שלי", "הוספה ידנית"])
 
-    if action == "הוספה ידנית":
-        with st.form("add_form"):
-            net = st.text_input("רשת")
-            val = st.text_input("ערך")
-            type_i = st.selectbox("סוג", ["Link", "Code", "Credit Card"])
-            exp = st.text_input("תוקף")
-            code = st.text_input("קוד")
-            cvv = st.text_input("CVV")
-            notes = st.text_area("הערות")
-            if st.form_submit_button("שמור"):
-                new_row = pd.DataFrame([{"network": net, "type": type_i, "value": val, "code_or_link": code, "expiry": exp, "cvv": cvv, "notes": notes}])
-                conn.update(worksheet="Sheet1", data=pd.concat([df, new_row], ignore_index=True))
-                st.success("נשמר!"); st.rerun()
+    df["amount"] = df["value"].apply(parse_amount)
+    st.metric("סה״כ שווי הקופונים", f"₪{df['amount'].sum():,.2f}")
 
-    elif action == "הארנק שלי":
-        if "all_expanded" not in st.session_state: st.session_state.all_expanded = True
-        c_exp1, c_exp2, _ = st.columns([1, 1, 4])
-        if c_exp1.button("📂 הרחב"): st.session_state.all_expanded = True; st.rerun()
-        if c_exp2.button("📁 כווץ"): st.session_state.all_expanded = False; st.rerun()
+    # פילטרים
+    filtered_df = df.copy()
 
-        display_df = df.sort_values(by='network')
-        for net in display_df['network'].unique():
-            with st.expander(f"🏢 {net}", expanded=st.session_state.all_expanded):
-                st.image(LOGOS.get(net, DEFAULT_LOGO), width=80)
-                for i, row in display_df[display_df['network'] == net].iterrows():
-                    with st.container(border=True):
-                        st.write(f"**ערך: {row['value']}** | תוקף: {row['expiry']}")
-                        if str(row['code_or_link']).startswith("http"): st.link_button("פתח", row['code_or_link'])
-                        else: st.code(row['code_or_link'])
-                        if st.button("✏️", key=f"ed_{i}"): edit_coupon_dialog(i, row, df, conn)
+    if search_text:
+        filtered_df = filtered_df[
+            filtered_df.apply(
+                lambda r: search_text.lower() in r.astype(str).str.lower().to_string(),
+                axis=1
+            )
+        ]
+
+    filtered_df = filtered_df[filtered_df["type"].isin(type_filter)]
+
+    # התראות תוקף
+    today = datetime.today()
+    soon = (df["expiry"].apply(parse_expiry) <= today + timedelta(days=7)).sum()
+    expired = (df["expiry"].apply(parse_expiry) < today).sum()
+
+    st.info(f"🟠 {soon} קופונים פגים השבוע | 🔴 {expired} פגי תוקף")
+
+    # כפתור שליחת מייל
+    if st.button("📧 שלח התרעות מייל עכשיו"):
+        if send_expiry_email(df):
+            st.success("המייל נשלח בהצלחה")
+        else:
+            st.info("אין קופונים עם תוקף קרוב או שהתראות כבויות")
+
+    # מחיקה מרובה
+    st.markdown("### 🗑️ מחיקה מרובה")
+    selected = st.multiselect(
+        "בחר קופונים למחיקה",
+        options=filtered_df.index,
+        format_func=lambda i: f"{filtered_df.loc[i,'network']} | {filtered_df.loc[i,'value']}"
+    )
+
+    if st.button("🗑️ מחק נבחרים"):
+        if selected:
+            df = df.drop(selected)
+            conn.update(worksheet="Sheet1", data=df.reset_index(drop=True))
+            st.success(f"נמחקו {len(selected)} קופונים")
+            st.rerun()
+        else:
+            st.warning("לא נבחרו קופונים")
+
+    # הצגת קופונים
+    for i, row in filtered_df.iterrows():
+        with st.container(border=True):
+            st.write(f"**{row['network']}** | {row['value']} | תוקף: {row['expiry']}")
+            st.code(row["code_or_link"])
+            if st.button("🗑️ מחק", key=f"del_{i}"):
+                df = df.drop(i)
+                conn.update(worksheet="Sheet1", data=df.reset_index(drop=True))
+                st.rerun()
