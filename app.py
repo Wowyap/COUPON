@@ -3,29 +3,36 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import re
 from datetime import datetime, timedelta
-import io
 import smtplib
 from email.mime.text import MIMEText
 
-# ----------------- הגדרות כלליות -----------------
+# --------------------------------------------------
+# הגדרות עיצוב
+# --------------------------------------------------
 st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
-GLOBAL_FONT_SIZE = "18px"
-
-st.markdown(f"""
+st.markdown("""
 <style>
-html, body, [class*="st-"] {{
-    font-size: {GLOBAL_FONT_SIZE};
+html, body, [class*="st-"] {
     direction: rtl;
     text-align: right;
-}}
+    font-size: 18px;
+}
+section[data-testid="stSidebar"] * {
+    text-align: right;
+}
+section[data-testid="stSidebar"] label {
+    white-space: nowrap;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- פונקציות עזר -----------------
+# --------------------------------------------------
+# פונקציות עזר
+# --------------------------------------------------
 def clean_data(df):
-    for col in df.columns:
-        df[col] = df[col].astype(str).replace("nan", "")
+    for c in df.columns:
+        df[c] = df[c].astype(str).replace("nan", "")
     return df
 
 def parse_expiry(val):
@@ -39,13 +46,12 @@ def parse_expiry(val):
     return datetime.max
 
 def parse_amount(val):
-    try:
-        nums = re.findall(r"\d+\.?\d*", str(val))
-        return float(nums[0]) if nums else 0.0
-    except:
-        return 0.0
+    nums = re.findall(r"\d+\.?\d*", str(val))
+    return float(nums[0]) if nums else 0.0
 
-# ----------------- מייל -----------------
+# --------------------------------------------------
+# מייל
+# --------------------------------------------------
 def send_expiry_email(df):
     if not st.session_state.email_enabled:
         return False
@@ -81,16 +87,25 @@ def send_expiry_email(df):
 
     return True
 
-# ----------------- חיבור ל־Google Sheets -----------------
+# --------------------------------------------------
+# חיבור ל־Google Sheets
+# --------------------------------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = clean_data(conn.read(worksheet="Sheet1", ttl=0))
 
-# ----------------- Sidebar -----------------
-st.sidebar.title("⚙️ ניווט והגדרות")
+# --------------------------------------------------
+# Sidebar – ניווט והגדרות
+# --------------------------------------------------
+st.sidebar.markdown("## 📂 ניווט")
+page = st.sidebar.radio(
+    "",
+    ["הארנק שלי", "הוספה ידנית"],
+    label_visibility="collapsed"
+)
 
-page = st.sidebar.radio("עבור אל:", ["הארנק שלי", "הוספה ידנית"])
+st.sidebar.markdown("---")
+st.sidebar.markdown("## 🔎 חיפוש וסינון")
 
-st.sidebar.markdown("### 🔎 חיפוש וסינון")
 search_text = st.sidebar.text_input("חיפוש חופשי")
 type_filter = st.sidebar.multiselect(
     "סוג קופון",
@@ -98,14 +113,16 @@ type_filter = st.sidebar.multiselect(
     default=list(df["type"].unique())
 )
 
-st.sidebar.markdown("### 📧 הגדרות התראות מייל")
+st.sidebar.markdown("---")
+st.sidebar.markdown("## 📧 התראות מייל")
 
 st.session_state.email_enabled = st.sidebar.checkbox(
-    "הפעל התראות מייל", value=True
+    "הפעל התראות מייל",
+    value=True
 )
 
 st.session_state.email_recipient = st.sidebar.text_input(
-    "שלח התראות אל:",
+    "שלח אל:",
     value="eyalicohen@gmail.com"
 )
 
@@ -116,9 +133,11 @@ st.session_state.alert_days = st.sidebar.multiselect(
     format_func=lambda x: f"{x} ימים"
 )
 
-# ----------------- עמוד הוספה -----------------
+# --------------------------------------------------
+# הוספה ידנית
+# --------------------------------------------------
 if page == "הוספה ידנית":
-    st.header("➕ הוספת קופון")
+    st.title("➕ הוספת קופון")
 
     with st.form("add_coupon"):
         net = st.text_input("רשת")
@@ -144,7 +163,9 @@ if page == "הוספה ידנית":
             st.success("הקופון נוסף")
             st.rerun()
 
-# ----------------- הארנק -----------------
+# --------------------------------------------------
+# הארנק
+# --------------------------------------------------
 if page == "הארנק שלי":
     st.title("🎫 My Coupon Wallet")
 
@@ -164,14 +185,14 @@ if page == "הארנק שלי":
 
     filtered_df = filtered_df[filtered_df["type"].isin(type_filter)]
 
-    # התראות תוקף
+    # סטטוס תוקף
     today = datetime.today()
     soon = (df["expiry"].apply(parse_expiry) <= today + timedelta(days=7)).sum()
     expired = (df["expiry"].apply(parse_expiry) < today).sum()
 
     st.info(f"🟠 {soon} קופונים פגים השבוע | 🔴 {expired} פגי תוקף")
 
-    # כפתור שליחת מייל
+    # שליחת מייל
     if st.button("📧 שלח התרעות מייל עכשיו"):
         if send_expiry_email(df):
             st.success("המייל נשלח בהצלחה")
