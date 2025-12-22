@@ -8,6 +8,13 @@ PASSWORD = "1"
 
 st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
+# פונקציה לניקוי ה-.0 המציק מכל העמודות הרלוונטיות
+def clean_decimal_strings(df):
+    for col in df.columns:
+        # הופך לטקסט ומסיר .0 בסוף המחרוזת
+        df[col] = df[col].astype(str).replace(r'\.0$', '', regex=True).replace('nan', '')
+    return df
+
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -23,7 +30,6 @@ def check_password():
         return False
     return True
 
-# Helper to sum amounts for the dashboard summary
 def parse_amount(val):
     try:
         val = str(val).lower().replace('₪', '').strip()
@@ -39,9 +45,9 @@ if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     try:
-        # Read with ttl=0 to ensure real-time updates from Google Sheets
         df = conn.read(worksheet="Sheet1", ttl="0")
-        df = df.fillna("")
+        # --- כאן קורה הקסם של הניקוי ---
+        df = clean_decimal_strings(df)
     except Exception as e:
         st.error(f"Connection Error: {e}")
         st.stop()
@@ -50,27 +56,35 @@ if check_password():
 
     # --- Dashboard Summary Section ---
     if not df.empty:
+        # חישוב הסכום (צריך להמיר זמנית למספר לצורך החישוב)
         total_value = df['value'].apply(parse_amount).sum()
-        col1, col2 = st.columns(2)
-        col1.metric("Total Estimated Value", f"{total_value:,.2f} ₪")
-        col2.metric("Total Active Coupons", len(df))
-        st.markdown("---")
+        
+        # עיצוב מטריקות בתוך קונטיינר
+        with st.container(border=True):
+            col1, col2, col3 = st.columns(3)
+            col1.metric("💰 Total Value", f"{total_value:,.2f} ₪")
+            col2.metric("🎟️ Active Coupons", len(df))
+            col3.write("") # מקום ריק לאיזון
+    
+    st.markdown("---")
 
     # --- Sidebar Management ---
-    st.sidebar.header("Navigation")
+    st.sidebar.header("🕹️ Menu")
     action = st.sidebar.radio("Go to:", ["My Wallet", "Add Manually", "Bulk Upload"])
 
     if action == "Add Manually":
         st.subheader("➕ Add New Coupon")
-        with st.form("add_form"):
-            net = st.text_input("Network (e.g., Rami Levy)")
-            v = st.text_input("Value (e.g., 50 or 50x5)")
-            t = st.selectbox("Type", ["Link", "Code", "Credit Card"])
+        with st.form("add_form", clear_on_submit=True):
+            col_a, col_b = st.columns(2)
+            net = col_a.text_input("Network (e.g., Rami Levy)")
+            v = col_b.text_input("Value (e.g., 50 or 50x5)")
+            t = col_a.selectbox("Type", ["Link", "Code", "Credit Card"])
+            exp = col_b.text_input("Expiry (MM/YYYY)")
             code = st.text_input("Code or URL")
-            exp = st.text_input("Expiry (DD-MM-YYYY)")
             cvv = st.text_input("CVV")
             n = st.text_area("Notes")
-            if st.form_submit_button("Save to Sheets"):
+            
+            if st.form_submit_button("🚀 Save to Wallet"):
                 new_row = pd.DataFrame([{"network": net, "type": t, "value": v, 
                                           "code_or_link": code, "expiry": exp, "cvv": cvv, "notes": n}])
                 updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -89,48 +103,52 @@ if check_password():
                 st.success("Bulk update complete!")
                 st.rerun()
 
-    else: # My Wallet (Hierarchical View)
-        search = st.text_input("🔍 Filter by network:")
+    else: # My Wallet
+        search = st.text_input("🔍 Search network...", placeholder="Start typing to filter...")
         display_df = df[df['network'].str.contains(search, case=False, na=False)] if search else df
 
         if display_df.empty:
-            st.info("No records found.")
+            st.info("Your wallet is empty or no results found.")
         else:
-            # Grouping items by network name for cleaner UI
             networks = sorted(display_df['network'].unique())
             
             for net in networks:
                 net_coupons = display_df[display_df['network'] == net]
-                with st.expander(f"➕ {net} ({len(net_coupons)} coupons)"):
+                # עיצוב כותרת הרשת
+                with st.expander(f"🏢 {net.upper()} — {len(net_coupons)} items"):
                     for i, row in net_coupons.iterrows():
-                        c1, c2, c3, c4 = st.columns([1, 2.5, 1, 0.5])
-                        
-                        with c1:
-                            st.write(f"**{row['value']}**")
-                            if row['expiry']: st.caption(f"Expires: {row['expiry']}")
-                        
-                        with c2:
-                            val = str(row['code_or_link']).strip()
-                            if val.startswith("http"):
-                                # Display button AND raw text link
-                                st.link_button("Open Link 🔗", val)
-                                st.caption(f"Full URL: {val}")
-                            else:
-                                st.code(val, language="text")
-                        
-                        with c3:
-                            if row['cvv']: st.write(f"CVV: {row['cvv']}")
-                            if row['notes']: st.info(row['notes'])
+                        # יצירת "כרטיס" לכל קופון
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([1, 2, 0.5])
                             
-                        with c4:
-                            # Unique key for each delete button based on index
-                            if st.button("🗑️", key=f"del_{i}"):
-                                full_df = conn.read(worksheet="Sheet1", ttl="0")
-                                full_df = full_df.drop(i).reset_index(drop=True)
-                                conn.update(worksheet="Sheet1", data=full_df)
-                                st.rerun()
-                        st.markdown("---")
+                            with c1:
+                                st.markdown(f"### {row['value']} ₪")
+                                if row['expiry']: 
+                                    st.caption(f"📅 Expires: {row['expiry']}")
+                                if row['cvv']:
+                                    st.markdown(f"**CVV:** `{row['cvv']}`")
+                            
+                            with c2:
+                                val = str(row['code_or_link']).strip()
+                                if val.startswith("http"):
+                                    st.link_button("🌐 Open Coupon Link", val, use_container_width=True)
+                                else:
+                                    st.code(val, language="text")
+                                
+                                if row['notes']:
+                                    st.caption(f"📝 {row['notes']}")
+                            
+                            with c3:
+                                # כפתור מחיקה מעוצב
+                                if st.button("🗑️", key=f"del_{i}", help="Delete this coupon"):
+                                    # קריאה מחדש כדי לוודא שמוחקים מהגרסה הכי עדכנית
+                                    full_df = conn.read(worksheet="Sheet1", ttl="0")
+                                    full_df = full_df.drop(i).reset_index(drop=True)
+                                    conn.update(worksheet="Sheet1", data=full_df)
+                                    st.rerun()
 
-    if st.sidebar.button("Logout"):
+    # Sidebar Logout
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔓 Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
