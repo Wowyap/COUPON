@@ -4,7 +4,6 @@ import pandas as pd
 import re
 from datetime import datetime, timedelta
 import io
-from fpdf import FPDF
 
 # --- 1. הגדרות עיצוב ואבטחה ---
 GLOBAL_FONT_SIZE = "20px" 
@@ -107,17 +106,6 @@ def export_excel(df):
     df.to_excel(output, index=False)
     return output
 
-def export_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    for i, row in df.iterrows():
-        line = f"{row['network']} | {row['value']} | {row['type']} | {row['expiry']}"
-        pdf.cell(0, 10, line, ln=True)
-    pdf_output = io.BytesIO()
-    pdf.output(pdf_output)
-    return pdf_output
-
 # --- 3. הרצה ---
 if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -185,9 +173,8 @@ if check_password():
         if st.button("🗑️ מחיקה מרובה") and selected_indexes:
             delete_coupon_dialog(selected_indexes, df, conn)
 
-        # ייצוא
+        # ייצוא ל-Excel בלבד
         st.download_button("⬇️ הורד Excel", data=export_excel(display_df), file_name="coupons.xlsx")
-        st.download_button("⬇️ הורד PDF", data=export_pdf(display_df), file_name="coupons.pdf")
 
         # הצגת הקופונים
         for net in display_df['network'].unique():
