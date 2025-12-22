@@ -10,34 +10,37 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="ארנק קופונים חכם", page_icon="🎫", layout="wide")
 
 # ===============================
-# CSS – RTL + Mobile + Card Design
+# CSS – תיקון סופי למובייל ולטקסט אנכי
 # ===============================
 st.markdown("""
 <style>
-    [data-testid="stAppViewContainer"], [data-testid="stHeader"] { direction: rtl; text-align: right; }
-    div[data-testid="stVerticalBlock"] > div { width: 100% !important; }
+    [data-testid="stAppViewContainer"] { direction: rtl; text-align: right; }
     
+    /* מניעת הפיכת טקסט לטור אנכי צר */
+    div[data-testid="stVerticalBlock"] > div {
+        width: 100% !important;
+        flex: unset !important;
+    }
+
     .coupon-card {
         padding: 1.2rem; border-radius: 12px; background-color: #ffffff;
         border: 1px solid #e0e0e0; margin-bottom: 10px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        width: 100%;
     }
-    .group-summary {
-        background-color: #f0f2f6; padding: 10px; border-radius: 8px;
-        margin-bottom: 15px; border-right: 5px solid #007bff;
-        font-weight: bold;
-    }
+    
     .code-container {
         direction: ltr !important; text-align: left !important;
         background: #f8f9fa; padding: 10px; border-radius: 6px;
         font-family: monospace; word-break: break-all; margin: 10px 0;
         border: 1px dashed #adb5bd;
+        white-space: normal;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ===============================
-# Helpers
+# Helpers – תיקון ה-AttributeError
 # ===============================
 def parse_amount(val):
     try:
@@ -46,11 +49,13 @@ def parse_amount(val):
     except: return 0.0
 
 def parse_expiry(val):
-    try: return datetime.strptime(val, "%d/%m/%Y").date()
+    try: return datetime.strptime(str(val), "%d/%m/%Y").date()
     except: return None
 
 def is_url(string):
-    return string.startswith(('http://', 'https://', 'www.'))
+    # וידוא שהערך הוא מחרוזת כדי למנוע AttributeError
+    s = str(string).lower().strip()
+    return s.startswith(('http://', 'https://', 'www.'))
 
 # ===============================
 # Load data
@@ -60,7 +65,7 @@ df = conn.read(worksheet="Sheet1", ttl=0)
 df = df.fillna("")
 
 # ===============================
-# Sidebar
+# Sidebar & Navigation
 # ===============================
 page = st.sidebar.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון"])
 
@@ -71,7 +76,7 @@ if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
     with st.form("add_form", clear_on_submit=True):
         network = st.text_input("רשת / חנות")
-        value = st.text_input("ערך (לדוגמה: 100 שח)")
+        value = st.text_input("ערך (לדוגמה: 100)")
         expiry_date = st.date_input("תוקף", min_value=date.today())
         link = st.text_input("קוד או קישור")
         if st.form_submit_button("שמור בארנק"):
@@ -88,36 +93,26 @@ if page == "➕ הוספת קופון":
 else:
     st.header("🎫 הארנק שלי")
     
-    # חישוב שווי כללי
     df["amount_calc"] = df["value"].apply(parse_amount)
     total_all = df["amount_calc"].sum()
-    st.info(f"💰 **שווי כולל בארנק:** ₪ {total_all:,.0f} ({len(df)} קופונים)")
+    st.info(f"💰 **סה\"כ בארנק:** ₪ {total_all:,.0f} | {len(df)} קופונים")
 
-    # חיפוש
-    search = st.text_input("🔍 חיפוש מהיר...")
-    if search:
-        df = df[df.apply(lambda r: search.lower() in str(r).lower(), axis=1)]
-
-    # שליטה גלובלית
-    col_c1, col_c2 = st.columns(2)
-    expand_all = col_c1.button("↔️ הרחב הכל", use_container_width=True)
-    collapse_all = col_c2.button("↕️ קבץ הכל", use_container_width=True)
-    
+    # שליטה על Expander
     if "expand_state" not in st.session_state: st.session_state.expand_state = True
-    if expand_all: st.session_state.expand_state = True
-    if collapse_all: st.session_state.expand_state = False
+    c1, c2 = st.columns(2)
+    if c1.button("↔️ הרחב הכל", use_container_width=True): st.session_state.expand_state = True; st.rerun()
+    if c2.button("↕️ קבץ הכל", use_container_width=True): st.session_state.expand_state = False; st.rerun()
 
-    # קיבוץ לפי רשת
     networks = sorted(df["network"].unique())
     
     for net in networks:
         net_df = df[df["network"] == net]
-        group_total = net_df["amount_calc"].sum()
+        group_sum = net_df["amount_calc"].sum()
         
-        with st.expander(f"📦 {net} | {len(net_df)} קופונים | ₪ {group_total:,.0f}", expanded=st.session_state.expand_state):
+        with st.expander(f"📦 {net} ({len(net_df)}) | ₪ {group_sum:,.0f}", expanded=st.session_state.expand_state):
             for i, row in net_df.iterrows():
                 exp_dt = parse_expiry(row["expiry"])
-                color = "#28a745" # ברירת מחדל ירוק
+                color = "#28a745"
                 if exp_dt:
                     days = (exp_dt - date.today()).days
                     if days < 0: color = "#ff4b4b"
@@ -125,46 +120,40 @@ else:
 
                 st.markdown(f"""
                 <div class="coupon-card" style="border-right: 6px solid {color};">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:1.2rem; font-weight:bold;">{row['value']}</span>
-                        <span style="color:#666;">תוקף: {row['expiry']}</span>
+                    <div style="display:flex; justify-content:space-between;">
+                        <b>{row['value']}</b>
+                        <span style="color:#666; font-size:0.8rem;">תוקף: {row['expiry']}</span>
                     </div>
                     <div class="code-container">{row['code_or_link']}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
-                # שורת כפתורי פעולה
-                btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-                
-                with btn_col1:
-                    # חלון עריכה קופץ (Popover)
+                # כפתורי פעולה
+                b1, b2, b3 = st.columns(3)
+                with b1:
                     with st.popover("✏️ עריכה", use_container_width=True):
-                        st.write(f"עדכון פרטים: {row['network']}")
-                        e_net = st.text_input("רשת", value=row['network'], key=f"e_net_{i}")
-                        e_val = st.text_input("ערך", value=row['value'], key=f"e_val_{i}")
-                        e_exp = st.date_input("תוקף", value=parse_expiry(row['expiry']) or date.today(), key=f"e_exp_{i}")
-                        e_link = st.text_input("קוד/לינק", value=row['code_or_link'], key=f"e_link_{i}")
-                        if st.button("שמור שינויים", key=f"save_{i}"):
-                            df.at[i, "network"] = e_net
-                            df.at[i, "value"] = e_val
-                            df.at[i, "expiry"] = e_exp.strftime("%d/%m/%Y")
-                            df.at[i, "code_or_link"] = e_link
+                        edit_net = st.text_input("רשת", value=row['network'], key=f"n_{i}")
+                        edit_val = st.text_input("ערך", value=row['value'], key=f"v_{i}")
+                        edit_exp = st.date_input("תוקף", value=exp_dt or date.today(), key=f"d_{i}")
+                        edit_link = st.text_input("קוד/לינק", value=row['code_or_link'], key=f"l_{i}")
+                        if st.button("עדכן", key=f"upd_{i}"):
+                            df.at[i, "network"] = edit_net
+                            df.at[i, "value"] = edit_val
+                            df.at[i, "expiry"] = edit_exp.strftime("%d/%m/%Y")
+                            df.at[i, "code_or_link"] = edit_link
                             conn.update(worksheet="Sheet1", data=df.drop(columns=["amount_calc"]))
-                            st.success("עודכן!")
                             st.rerun()
-
-                with btn_col2:
-                    # כפתור לינק חכם
-                    link_val = row['code_or_link']
-                    if is_url(link_val):
-                        # אם זה לינק, הקישור יתחיל ב-https אם חסר
-                        url_to_open = link_val if link_val.startswith('http') else f"https://{link_val}"
-                        st.link_button("🌐 מעבר ללינק", url_to_open, use_container_width=True)
+                
+                with b2:
+                    link_text = str(row['code_or_link'])
+                    if is_url(link_text):
+                        url = link_text if link_text.startswith('http') else f"https://{link_text}"
+                        st.link_button("🌐 לינק", url, use_container_width=True)
                     else:
                         st.button("🔗 אין לינק", disabled=True, use_container_width=True)
 
-                with btn_col3:
-                    if st.button("🗑️ מחיקה", key=f"del_{i}", use_container_width=True):
+                with b3:
+                    if st.button("🗑️ מחק", key=f"del_{i}", use_container_width=True):
                         df = df.drop(i)
                         conn.update(worksheet="Sheet1", data=df.reset_index(drop=True).drop(columns=["amount_calc"]))
                         st.rerun()
