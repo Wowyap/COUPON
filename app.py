@@ -3,11 +3,10 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import re
 from datetime import datetime, timedelta
-import io
 
-# --- 1. הגדרות עיצוב ואבטחה ---
+# --- 1. הגדרות עיצוב ---
+PASSWORD = "3430"
 GLOBAL_FONT_SIZE = "20px" 
-st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
 LOGOS = {
     "רמי לוי": "https://upload.wikimedia.org/wikipedia/he/thumb/6/6a/Rami_Levy_logo.svg/250px-Rami_Levy_logo.svg.png",
@@ -16,19 +15,18 @@ LOGOS = {
 }
 DEFAULT_LOGO = "https://cdn-icons-png.flaticon.com/512/726/726476.png"
 
+st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
+
 st.markdown(f"""
-<style>
-html, body, [class*="st-"], p, div, span, input, label, button {{
-    font-size: {GLOBAL_FONT_SIZE} !important;
-}}
-code {{ font-size: {GLOBAL_FONT_SIZE} !important; }}
-body {{ direction: rtl; text-align: right; }}
-</style>
-""", unsafe_allow_html=True)
+    <style>
+    html, body, [class*="st-"], p, div, span, input, label, button {{
+        font-size: {GLOBAL_FONT_SIZE} !important;
+    }}
+    code {{ font-size: {GLOBAL_FONT_SIZE} !important; }}
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- 2. פונקציות עזר ---
-PASSWORDS = {"admin": "3430", "user": "1234"}  # דוגמה להרשאות
-
 def clean_data(df):
     for col in df.columns:
         df[col] = df[col].astype(str).replace(r'\.0$', '', regex=True).replace('nan', '')
@@ -75,36 +73,18 @@ def edit_coupon_dialog(index, row_data, df, conn):
             conn.update(worksheet="Sheet1", data=df)
             st.rerun()
 
-@st.dialog("מחיקת קופון 🗑️")
-def delete_coupon_dialog(indexes, df, conn):
-    st.warning(f"האם אתה בטוח שברצונך למחוק {len(indexes)} קופונים?")
-    if st.button("🗑️ מחק לצמיתות"):
-        df = df.drop(indexes)
-        conn.update(worksheet="Sheet1", data=df.reset_index(drop=True))
-        st.success(f"{len(indexes)} קופונים נמחקו")
-        st.rerun()
-
-# --- אימות סיסמה והרשאות ---
 def check_password():
     if "authenticated" not in st.session_state: st.session_state.authenticated = False
     if not st.session_state.authenticated:
         st.title("🔒 Login")
-        username = st.text_input("שם משתמש")
         pwd = st.text_input("Password:", type="password")
         if st.button("Enter"):
-            if username in PASSWORDS and pwd == PASSWORDS[username]:
+            if pwd == PASSWORD:
                 st.session_state.authenticated = True
-                st.session_state.user = username
                 st.rerun()
-            else: st.error("שם משתמש או סיסמה שגויים")
+            else: st.error("Wrong password")
         return False
     return True
-
-# --- פונקציות נוספות ---
-def export_excel(df):
-    output = io.BytesIO()
-    df.to_excel(output, index=False)
-    return output
 
 # --- 3. הרצה ---
 if check_password():
@@ -115,12 +95,6 @@ if check_password():
     
     # תפריט צד
     action = st.sidebar.radio("עבור אל:", ["הארנק שלי", "הוספה ידנית"])
-
-    # פילטרים
-    st.sidebar.markdown("### 🔎 חיפוש וסינון")
-    search_text = st.sidebar.text_input("חיפוש חופשי")
-    type_filter = st.sidebar.multiselect("סוג קופון", options=df["type"].unique(), default=df["type"].unique())
-    expiry_filter = st.sidebar.selectbox("תוקף", ["הכל", "בתוקף", "פג תוקף", "פג השבוע"])
 
     if action == "הוספה ידנית":
         with st.form("add_form"):
@@ -134,8 +108,7 @@ if check_password():
             if st.form_submit_button("שמור"):
                 new_row = pd.DataFrame([{"network": net, "type": type_i, "value": val, "code_or_link": code, "expiry": exp, "cvv": cvv, "notes": notes}])
                 conn.update(worksheet="Sheet1", data=pd.concat([df, new_row], ignore_index=True))
-                st.success("נשמר!")
-                st.rerun()
+                st.success("נשמר!"); st.rerun()
 
     elif action == "הארנק שלי":
         if "all_expanded" not in st.session_state: st.session_state.all_expanded = True
@@ -143,53 +116,13 @@ if check_password():
         if c_exp1.button("📂 הרחב"): st.session_state.all_expanded = True; st.rerun()
         if c_exp2.button("📁 כווץ"): st.session_state.all_expanded = False; st.rerun()
 
-        # חישוב ערך כספי
-        df['amount'] = df['value'].apply(parse_amount)
-        st.metric("סה״כ שווי הקופונים", f"₪{df['amount'].sum():,.2f}")
-
-        # החלת פילטרים
-        filtered_df = df.copy()
-        if search_text:
-            filtered_df = filtered_df[filtered_df.apply(lambda r: search_text.lower() in r.astype(str).str.lower().to_string(), axis=1)]
-        filtered_df = filtered_df[filtered_df["type"].isin(type_filter)]
-        filtered_df["expiry_dt"] = filtered_df["expiry"].apply(parse_expiry)
-        today = datetime.today()
-        if expiry_filter == "בתוקף":
-            filtered_df = filtered_df[filtered_df["expiry_dt"] >= today]
-        elif expiry_filter == "פג תוקף":
-            filtered_df = filtered_df[filtered_df["expiry_dt"] < today]
-        elif expiry_filter == "פג השבוע":
-            filtered_df = filtered_df[(filtered_df["expiry_dt"] >= today) & (filtered_df["expiry_dt"] <= today + timedelta(days=7))]
-
-        display_df = filtered_df.sort_values(by='network')
-
-        # התראות על תוקף
-        soon = (df["expiry"].apply(parse_expiry) <= today + timedelta(days=7)).sum()
-        expired = (df["expiry"].apply(parse_expiry) < today).sum()
-        st.info(f"🟠 {soon} קופונים פגים השבוע | 🔴 {expired} פגי תוקף")
-
-        # בחירה מרובה למחיקה
-        selected_indexes = st.multiselect("בחר קופונים למחיקה", options=display_df.index, format_func=lambda i: f"{display_df.loc[i, 'network']} | {display_df.loc[i, 'value']}")
-        if st.button("🗑️ מחיקה מרובה") and selected_indexes:
-            delete_coupon_dialog(selected_indexes, df, conn)
-
-        # ייצוא ל-Excel בלבד
-        st.download_button("⬇️ הורד Excel", data=export_excel(display_df), file_name="coupons.xlsx")
-
-        # הצגת הקופונים
+        display_df = df.sort_values(by='network')
         for net in display_df['network'].unique():
             with st.expander(f"🏢 {net}", expanded=st.session_state.all_expanded):
                 st.image(LOGOS.get(net, DEFAULT_LOGO), width=80)
                 for i, row in display_df[display_df['network'] == net].iterrows():
-                    with st.container():
-                        exp_dt = parse_expiry(row['expiry'])
-                        if exp_dt < today:
-                            status = "🔴 פג תוקף"
-                        elif exp_dt <= today + timedelta(days=7):
-                            status = "🟠 פג השבוע"
-                        else:
-                            status = "🟢 תקף"
-                        st.write(f"**ערך: {row['value']}** | תוקף: {row['expiry']} | {status}")
-                        c1, c2 = st.columns([1,1])
-                        if c1.button("✏️", key=f"ed_{i}"): edit_coupon_dialog(i, row, df, conn)
-                        if c2.button("🗑️", key=f"del_{i}"): delete_coupon_dialog([i], df, conn)
+                    with st.container(border=True):
+                        st.write(f"**ערך: {row['value']}** | תוקף: {row['expiry']}")
+                        if str(row['code_or_link']).startswith("http"): st.link_button("פתח", row['code_or_link'])
+                        else: st.code(row['code_or_link'])
+                        if st.button("✏️", key=f"ed_{i}"): edit_coupon_dialog(i, row, df, conn)
