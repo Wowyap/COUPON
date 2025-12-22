@@ -17,10 +17,10 @@ def clean_data(df):
 
 def parse_expiry(date_str):
     """ניסיון להמיר מחרוזת תאריך לאובייקט datetime לצורך מיון"""
-    if not date_str or date_str == "":
-        return datetime.max # קופונים בלי תאריך יופיעו בסוף
+    if not date_str or date_str == "" or date_str == "None":
+        return datetime.max
     
-    formats = ["%d/%m/%Y", "%d/%m/%y", "%m/%y", "%Y-%m-%d"]
+    formats = ["%d/%m/%Y", "%d/%m/%y", "%m/%y", "%m/%Y", "%Y-%m-%d"]
     for fmt in formats:
         try:
             return datetime.strptime(date_str, fmt)
@@ -39,12 +39,13 @@ def parse_amount(val):
     except:
         return 0.0
 
-# --- 3. חלון עריכה צף ---
+# --- 3. חלון עריכה צף (עם שמות מודגשים) ---
 @st.dialog("ערוך קופון ✏️")
 def edit_coupon_dialog(index, row_data, df, conn):
     with st.form("edit_form"):
-        st.markdown(f"### עריכת קופון: {row_data['network']}")
-        new_net = st.text_input("רשת", value=row_data['network'])
+        # הדגשת שם הרשת בכותרת העריכה
+        st.markdown(f"### עריכת קופון עבור: **{row_data['network']}**")
+        new_net = st.text_input("שם הרשת", value=row_data['network'])
         new_val = st.text_input("ערך/סכום", value=row_data['value'])
         new_type = st.selectbox("סוג", ["Link", "Code", "Credit Card"], 
                                index=["Link", "Code", "Credit Card"].index(row_data['type']) if row_data['type'] in ["Link", "Code", "Credit Card"] else 0)
@@ -53,7 +54,7 @@ def edit_coupon_dialog(index, row_data, df, conn):
         new_cvv = st.text_input("CVV", value=row_data['cvv'])
         new_notes = st.text_area("הערות", value=row_data['notes'])
         
-        if st.form_submit_button("שמור שינויים", use_container_width=True):
+        if st.form_submit_button("💾 שמור שינויים", use_container_width=True):
             df.at[index, 'network'] = new_net
             df.at[index, 'value'] = new_val
             df.at[index, 'type'] = new_type
@@ -103,7 +104,9 @@ if check_password():
         with c2:
             st.container(border=True).metric("🎟️ קופונים", len(df))
         with c3:
-            st.container(border=True).metric("📅 פגי תוקף בקרוב", len([x for x in df['expiry'] if parse_expiry(x) < datetime.now() + timedelta(days=7)]))
+            # חישוב קופונים שפגים ב-7 הימים הקרובים
+            near_expiry = len([x for x in df['expiry'] if parse_expiry(x) < datetime.now() + timedelta(days=7)])
+            st.container(border=True).metric("📅 פגי תוקף בקרוב", near_expiry)
 
     st.sidebar.header("🕹️ תפריט")
     action = st.sidebar.radio("עבור אל:", ["הארנק שלי", "הוספה ידנית", "טעינה מרוכזת"])
@@ -129,9 +132,9 @@ if check_password():
                 st.rerun()
 
     elif action == "הארנק שלי":
-        search = st.text_input("🔍 חיפוש רשת...", placeholder="הקלד שם רשת...")
+        search = st.text_input("🔍 חיפוש רשת...", placeholder="הקלד שם רשת לסינון מהיר")
         
-        # לוגיקת מיון לפי תאריך
+        # מיון לפי תאריך תפוגה
         df['temp_date'] = df['expiry'].apply(parse_expiry)
         display_df = df.sort_values(by='temp_date', ascending=True)
         
@@ -141,17 +144,19 @@ if check_password():
         if display_df.empty:
             st.info("אין קופונים להצגה.")
         else:
-            networks = sorted(display_df['network'].unique())
+            # שמות הרשתות יישלפו מה-df המסונן והממוין
+            networks = display_df['network'].unique()
+            
             for net in networks:
                 net_coupons = display_df[display_df['network'] == net]
-                with st.expander(f"🏢 {net.upper()} — ({len(net_coupons)} פריטים)", expanded=True):
+                # --- שימוש ב-Markdown להדגשת שם הרשת בכותרת ה-Expander ---
+                with st.expander(f"🏢 **{net.upper()}** — ({len(net_coupons)} פריטים)", expanded=True):
                     for i, row in net_coupons.iterrows():
-                        # בדיקת דחיפות תאריך
                         expiry_date = parse_expiry(row['expiry'])
                         now = datetime.now()
                         
-                        card_border_color = "none"
                         status_msg = ""
+                        bg_color = "#F8F9FA" # צבע ברירת מחדל
                         
                         if expiry_date < now:
                             status_msg = "❌ פג תוקף"
@@ -159,13 +164,10 @@ if check_password():
                         elif expiry_date < now + timedelta(days=7):
                             status_msg = "⚠️ פג בקרוב!"
                             bg_color = "#FFF3E0"
-                        else:
-                            bg_color = "#F8F9FA"
 
-                        # יצירת ה-Card
                         with st.container(border=True):
-                            # שימוש ב-HTML קטן לצביעת הרקע אם פג תוקף
-                            st.markdown(f"""<div style="background-color:{bg_color}; padding:10px; border-radius:5px;">""", unsafe_allow_html=True)
+                            # יצירת רקע צבעוני לפי דחיפות
+                            st.markdown(f"""<div style="background-color:{bg_color}; padding:12px; border-radius:8px; border: 1px solid #ddd;">""", unsafe_allow_html=True)
                             
                             c1, c2, c3 = st.columns([1, 2, 0.5])
                             
@@ -184,9 +186,10 @@ if check_password():
                                 if row['notes']: st.info(f"💡 {row['notes']}")
                             
                             with c3:
-                                if st.button("✏️", key=f"edit_{i}", use_container_width=True):
+                                # כפתורי פעולה
+                                if st.button("✏️", key=f"edit_{i}", use_container_width=True, help="ערוך"):
                                     edit_coupon_dialog(i, row, df, conn)
-                                if st.button("🗑️", key=f"del_{i}", use_container_width=True):
+                                if st.button("🗑️", key=f"del_{i}", use_container_width=True, help="מחק"):
                                     full_df = conn.read(worksheet="Sheet1", ttl="0")
                                     full_df = full_df.drop(i).reset_index(drop=True)
                                     conn.update(worksheet="Sheet1", data=full_df)
@@ -195,6 +198,7 @@ if check_password():
                             st.markdown("</div>", unsafe_allow_html=True)
 
     # Logout
-    if st.sidebar.button("🔓 Logout"):
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔓 Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
