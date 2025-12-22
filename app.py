@@ -1,41 +1,35 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
 import re
 
-# --- הגדרות אבטחה ---
-PASSWORD = "7341756"
+# --- Security Settings ---
+PASSWORD = "שנה_לסיסמה_שלך"
 
-st.set_page_config(page_title="ארנק הקופונים החכם", layout="wide", page_icon="💰")
+st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
-# פונקציה לבדיקת סיסמה
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     if not st.session_state.authenticated:
-        st.title("🔒 כניסה למערכת המאובטחת")
-        pwd = st.text_input("הזן סיסמה:", type="password")
-        if st.button("כניסה"):
+        st.title("🔒 Login")
+        pwd = st.text_input("Password:", type="password")
+        if st.button("Enter"):
             if pwd == PASSWORD:
                 st.session_state.authenticated = True
                 st.rerun()
             else:
-                st.error("סיסמה שגויה")
+                st.error("Wrong password")
         return False
     return True
 
-# פונקציית עזר לחישוב סכומים (מטפלת בפורמטים כמו "50 x 5" או "100 ₪")
+# Helper to sum amounts for the dashboard
 def parse_amount(val):
     try:
-        val = str(val).replace('₪', '').strip()
-        if 'x' in val.lower():
-            parts = val.lower().split('x')
+        val = str(val).lower().replace('₪', '').strip()
+        if 'x' in val:
+            parts = val.split('x')
             return float(parts[0]) * float(parts[1])
-        if '*' in val:
-            parts = val.split('*')
-            return float(parts[0]) * float(parts[1])
-        # שליפת מספר בלבד (כולל נקודה עשרונית)
         numbers = re.findall(r"[-+]?\d*\.\d+|\d+", val)
         return float(numbers[0]) if numbers else 0.0
     except:
@@ -45,97 +39,99 @@ if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     try:
+        # Read from Google Sheets
         df = conn.read(worksheet="Sheet1", ttl="0")
         df = df.fillna("")
-    except:
-        st.error("שגיאה בחיבור ל-Google Sheets.")
+    except Exception as e:
+        st.error(f"Error: {e}")
         st.stop()
 
-    st.title("💰 לוח בקרה וניהול קופונים")
+    st.title("🎫 My Coupon Wallet")
 
-    # --- חלק 1: ה-Dashboard (סיכום כספי) ---
+    # --- Dashboard Summary ---
     if not df.empty:
-        total_value = df['סכום_או_מוצר'].apply(parse_amount).sum()
-        num_coupons = len(df)
-        
-        # חישוב קופונים שפגים בקרוב (לוגיקה בסיסית)
-        today = datetime.now()
-        expiring_soon = 0
-        for expiry in df['תוקף']:
-            try:
-                # מנסה לזהות פורמט DD-MM-YYYY או MM/YY
-                if '-' in str(expiry):
-                    exp_date = datetime.strptime(str(expiry), "%d-%m-%Y")
-                    if 0 <= (exp_date - today).days <= 30:
-                        expiring_soon += 1
-            except:
-                continue
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("סה\"כ שווי מוערך", f"{total_value:,.2f} ₪")
-        col2.metric("קופונים במלאי", num_coupons)
-        col3.metric("פגים ב-30 יום הקרובים", expiring_soon, delta_color="inverse")
-        
+        total_value = df['value'].apply(parse_amount).sum()
+        col1, col2 = st.columns(2)
+        col1.metric("Total Value", f"{total_value:,.2f} ₪")
+        col2.metric("Active Coupons", len(df))
         st.markdown("---")
 
-    # --- חלק 2: תפריט ניהול ---
-    st.sidebar.header("⚙️ אפשרויות")
-    menu = st.sidebar.radio("פעולה:", ["צפייה וחיפוש", "הוספה ידנית", "טעינה מאקסל"])
+    # --- Sidebar Actions ---
+    st.sidebar.header("Management")
+    action = st.sidebar.radio("Navigation:", ["My Wallet", "Add Manually", "Bulk Upload"])
 
-    if menu == "הוספה ידנית":
-        st.subheader("➕ הוספת קופון")
+    if action == "Add Manually":
+        st.subheader("➕ Add New Coupon")
         with st.form("add_form"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                store = st.text_input("רשת")
-                val = st.text_input("סכום (למשל: 100 או 50x5)")
-                c_type = st.selectbox("סוג:", ["קוד/מספר", "לינק", "כרטיס עם CVV", "מוצר"])
-            with col_b:
-                code = st.text_input("קוד / לינק מלא")
-                expiry = st.text_input("תוקף (DD-MM-YYYY)")
-                cvv = st.text_input("CVV")
-            notes = st.text_area("הערות")
-            if st.form_submit_button("שמור"):
-                new_row = pd.DataFrame([{"רשת": store, "סוג": c_type, "סכום_או_מוצר": val, 
-                                          "קוד_או_לינק": code, "תוקף": expiry, "CVV": cvv, "הערות": notes}])
+            net = st.text_input("Network")
+            v = st.text_input("Value (e.g. 100 or 50x5)")
+            t = st.selectbox("Type", ["Link", "Code", "Credit Card"])
+            code = st.text_input("Code or URL")
+            exp = st.text_input("Expiry (DD-MM-YYYY)")
+            cvv = st.text_input("CVV")
+            n = st.text_area("Notes")
+            if st.form_submit_button("Save"):
+                new_row = pd.DataFrame([{"network": net, "type": t, "value": v, 
+                                          "code_or_link": code, "expiry": exp, "cvv": cvv, "notes": n}])
                 updated_df = pd.concat([df, new_row], ignore_index=True)
                 conn.update(worksheet="Sheet1", data=updated_df)
-                st.success("עודכן בגיליון!")
+                st.success("Successfully saved to Google Sheets!")
                 st.rerun()
 
-    elif menu == "טעינה מאקסל":
-        st.subheader("📥 העלאה קבוצתית")
-        file = st.file_uploader("בחר קובץ", type=['xlsx', 'csv'])
+    elif action == "Bulk Upload":
+        st.subheader("📥 Upload CSV/Excel")
+        file = st.file_uploader("Select file", type=['xlsx', 'csv'])
         if file:
-            new_df = pd.read_excel(file) if file.name.endswith('xlsx') else pd.read_csv(file)
-            if st.button("בצע מיזוג לענן"):
+            new_df = pd.read_excel(file) if file.name.endswith('xlsx') else pd.read_csv(file, encoding='utf-8-sig')
+            if st.button("Upload to Cloud"):
                 updated_df = pd.concat([df, new_df], ignore_index=True)
                 conn.update(worksheet="Sheet1", data=updated_df)
-                st.success("הנתונים התווספו בהצלחה!")
+                st.success("Data merged successfully!")
                 st.rerun()
 
-    else: # צפייה וחיפוש
-        search = st.text_input("🔍 חפש רשת או מוצר:")
-        f_df = df[df['רשת'].str.contains(search, case=False, na=False)] if search else df
+    else: # My Wallet View
+        search = st.text_input("🔍 Search network:")
+        display_df = df[df['network'].str.contains(search, case=False, na=False)] if search else df
 
-        for i, row in f_df.iterrows():
-            with st.expander(f"**{row['רשת']}** | {row['סכום_או_מוצר']}"):
-                c1, c2 = st.columns([2, 1])
-                with c1:
-                    st.write(f"**תוקף:** {row['תוקף']}")
-                    if row['CVV']: st.write(f"**CVV:** {row['CVV']}")
-                    if row['הערות']: st.info(row['הערות'])
-                with c2:
-                    raw_code = str(row['קוד_או_לינק']).strip()
-                    if raw_code.startswith("http"):
-                        st.link_button("פתח קישור 🔗", raw_code)
-                    else:
-                        st.code(raw_code, language="text")
-                if st.button(f"מחק קופון", key=f"del_{i}"):
-                    updated_df = df.drop(i).reset_index(drop=True)
-                    conn.update(worksheet="Sheet1", data=updated_df)
-                    st.rerun()
+        if display_df.empty:
+            st.info("No coupons found.")
+        else:
+            # Grouping by network name
+            networks = sorted(display_df['network'].unique())
+            
+            for net in networks:
+                net_coupons = display_df[display_df['network'] == net]
+                with st.expander(f"➕ {net} ({len(net_coupons)} items)"):
+                    for i, row in net_coupons.iterrows():
+                        c1, c2, c3, c4 = st.columns([1, 2.5, 1, 0.5])
+                        
+                        with c1:
+                            st.write(f"**{row['value']}**")
+                            if row['expiry']: st.caption(f"Exp: {row['expiry']}")
+                        
+                        with c2:
+                            val = str(row['code_or_link']).strip()
+                            if val.startswith("http"):
+                                # הצגת לחצן פתיחה
+                                st.link_button("Open Link 🔗", val)
+                                # הצגת הלינק עצמו כטקסט
+                                st.caption(f"URL: {val}")
+                            else:
+                                st.code(val, language="text")
+                        
+                        with c3:
+                            if row['cvv']: st.write(f"CVV: {row['cvv']}")
+                            if row['notes']: st.info(row['notes'])
+                            
+                        with c4:
+                            if st.button("🗑️", key=f"del_{i}"):
+                                # Re-read data to ensure we delete the correct row
+                                full_df = conn.read(worksheet="Sheet1", ttl="0")
+                                full_df = full_df.drop(i).reset_index(drop=True)
+                                conn.update(worksheet="Sheet1", data=full_df)
+                                st.rerun()
+                        st.markdown("---")
 
-    if st.sidebar.button("התנתק"):
+    if st.sidebar.button("Logout"):
         st.session_state.authenticated = False
         st.rerun()
