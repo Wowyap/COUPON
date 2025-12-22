@@ -5,7 +5,7 @@ from datetime import datetime
 import re
 
 # --- הגדרות אבטחה ---
-PASSWORD = "שנה_לסיסמה_שלך"
+PASSWORD = "7341756"
 
 st.set_page_config(page_title="ארנק הקופונים החכם", layout="wide", page_icon="💰")
 
