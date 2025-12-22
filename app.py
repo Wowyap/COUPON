@@ -4,13 +4,14 @@ import pandas as pd
 import re
 from datetime import datetime, timedelta
 
-# --- 1. הגדרות עיצוב גלובליות ---
-PASSWORD = "1"
+# --- 1. הגדרות עיצוב ואבטחה ---
+# רשימת האימיילים המורשים נלקחת מה-Secrets (תחת [approved_users] emails)
+APPROVED_EMAILS = st.secrets.get("approved_users", {}).get("emails", [])
 GLOBAL_FONT_SIZE = "20px" 
 
-# מילון לוגואים
+# מילון לוגואים (המעודכן שלך)
 LOGOS = {
-    "רמי לוי": "https://he.wikipedia.org/wiki/%D7%A8%D7%9E%D7%99_%D7%9C%D7%95%D7%99_%D7%A9%D7%99%D7%95%D7%95%D7%A7_%D7%94%D7%A9%D7%A7%D7%9E%D7%94#/media/%D7%A7%D7%95%D7%91%D7%A5:RAMILEVI.png",
+    "רמי לוי": "https://upload.wikimedia.org/wikipedia/he/thumb/6/6a/Rami_Levy_logo.svg/250px-Rami_Levy_logo.svg.png",
     "Dream Card": "https://www.just4u.co.il/Pictures/12621111.jpg",
     "ויקטורי": "https://upload.wikimedia.org/wikipedia/he/c/c9/Victory_Supermarket_Chain_Logo.png",
 }
@@ -18,7 +19,7 @@ DEFAULT_LOGO = "https://cdn-icons-png.flaticon.com/512/726/726476.png"
 
 st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
-# הזרקת CSS (כולל גודל פונט ואופטימיזציה לכפתורי הכיווץ)
+# הזרקת CSS (גודל פונט גלובלי)
 st.markdown(f"""
     <style>
     html, body, [class*="st-"], p, div, span, input, label, button {{
@@ -77,21 +78,27 @@ def edit_coupon_dialog(index, row_data, df, conn):
             conn.update(worksheet="Sheet1", data=df)
             st.rerun()
 
-# --- 4. כניסה ---
-def check_password():
-    if "authenticated" not in st.session_state: st.session_state.authenticated = False
-    if not st.session_state.authenticated:
-        st.title("🔒 Login")
-        pwd = st.text_input("Password:", type="password")
-        if st.button("Enter"):
-            if pwd == PASSWORD:
-                st.session_state.authenticated = True
-                st.rerun()
-            else: st.error("Wrong password")
+# --- 4. מערכת אימות (Google Login) ---
+def check_auth():
+    # בדיקה אם המשתמש מחובר לגוגל
+    if not st.experimental_user.is_logged_in:
+        st.title("🔒 ארנק הקופונים שלי")
+        st.write("נא להתחבר עם חשבון גוגל כדי להמשיך.")
+        if st.button("התחבר עם Google 🚀", use_container_width=True):
+            st.login()
         return False
+    
+    # בדיקה אם האימייל מורשה
+    user_email = st.experimental_user.email
+    if user_email not in APPROVED_EMAILS:
+        st.error(f"החשבון {user_email} אינו מורשה לגשת למערכת.")
+        if st.button("התנתק"): st.logout()
+        return False
+    
     return True
 
-if check_password():
+# --- 5. לוגיקה מרכזית ---
+if check_auth():
     conn = st.connection("gsheets", type=GSheetsConnection)
     try:
         df = conn.read(worksheet="Sheet1", ttl="0")
@@ -99,6 +106,7 @@ if check_password():
     except Exception as e:
         st.error(f"שגיאת חיבור: {e}"); st.stop()
 
+    st.sidebar.write(f"שלום, **{st.experimental_user.name}** 👋")
     st.title("🎫 My Coupon Wallet")
 
     # מדדים
@@ -131,13 +139,11 @@ if check_password():
                 st.success("נשמר!"); st.rerun()
 
     elif action == "הארנק שלי":
-        # --- הגדרת מצב כיווץ/הרחבה ב-Session State ---
         if "all_expanded" not in st.session_state:
-            st.session_state.all_expanded = True # ברירת מחדל פתוח
+            st.session_state.all_expanded = True
 
         search = st.text_input("🔍 חיפוש רשת...")
         
-        # כפתורי שליטה גלובליים
         col_exp1, col_exp2, _ = st.columns([1, 1, 4])
         if col_exp1.button("📂 הרחב הכל", use_container_width=True):
             st.session_state.all_expanded = True
@@ -161,9 +167,8 @@ if check_password():
                 net_coupons = display_df[display_df['network'] == net]
                 logo_url = LOGOS.get(net, DEFAULT_LOGO)
                 
-                # השינוי כאן: expanded מקבל את הערך מה-Session State
                 with st.expander(f"🏢 **{net.upper()}** — ({len(net_coupons)} פריטים)", expanded=st.session_state.all_expanded):
-                    st.image(logo_url, width=80)
+                    st.image(logo_url, width=120)
                     for i, row in net_coupons.iterrows():
                         expiry_date = parse_expiry(row['expiry'])
                         bg_color = "#F8F9FA"
@@ -174,7 +179,7 @@ if check_password():
                             status_msg = "⚠️ פג בקרוב!"; bg_color = "#FFF3E0"
 
                         with st.container(border=True):
-                            st.markdown(f'<div style="background-color:{bg_color}; padding:15px; border-radius:10px;">', unsafe_allow_html=True)
+                            st.markdown(f'<div style="background-color:{bg_color}; padding:15px; border-radius:10px; border: 1px solid #ddd;">', unsafe_allow_html=True)
                             c1, c2, c3 = st.columns([1, 2, 0.5])
                             with c1:
                                 st.markdown(f"**ערך: {row['value']} ₪**")
@@ -193,6 +198,6 @@ if check_password():
                                     st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
 
-    if st.sidebar.button("🔓 Logout"):
-        st.session_state.authenticated = False
+    if st.sidebar.button("🔓 Logout", use_container_width=True):
+        st.logout()
         st.rerun()
