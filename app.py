@@ -4,7 +4,7 @@ import pandas as pd
 import re
 
 # --- Security Settings ---
-PASSWORD = "שנה_לסיסמה_שלך"
+PASSWORD = "1"
 
 st.set_page_config(page_title="My Coupon Wallet", layout="wide", page_icon="🎫")
 
