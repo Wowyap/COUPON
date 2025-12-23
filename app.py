@@ -4,12 +4,6 @@ import re
 import requests
 from datetime import datetime, date
 from streamlit_gsheets import GSheetsConnection
-from streamlit_oauth import import streamlit as st
-import pandas as pd
-import re
-import requests
-from datetime import datetime, date
-from streamlit_gsheets import GSheetsConnection
 from streamlit_oauth import OAuth2Component
 
 # ===============================
