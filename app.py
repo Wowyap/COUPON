@@ -3,15 +3,43 @@ import pandas as pd
 import re
 from datetime import datetime, date
 from streamlit_gsheets import GSheetsConnection
+from streamlit_google_auth import Authenticate
 
 # ===============================
-# Page config
+# 1. אימות משתמש (Google Login)
+# ===============================
+authenticator = Authenticate(
+    secret_key=st.secrets["secret_key"],
+    cookie_name='coupon_wallet_cookie',
+    cookie_expiry_days=30,
+    client_id=st.secrets["google_client_id"],
+    client_secret=st.secrets["google_client_secret"],
+    redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
+)
+
+# בדיקת מצב התחברות
+authenticator.check_authenticator()
+
+# אם לא מחובר - הצגת כפתור התחברות
+if not st.session_state.get('connected'):
+    st.markdown("<h2 style='text-align:center; direction:rtl;'>ברוכים הבאים לארנק הקופונים</h2>", unsafe_allow_html=True)
+    authenticator.login()
+    st.stop()
+
+# בדיקה שהמייל מורשה (הגנה מפני זרים)
+ALLOWED_USERS = ["eyalicohen@gmail.com"]  # <--- שנה למייל הג'ימייל שלך!
+user_info = st.session_state.get('user_info', {})
+if user_info.get('email') not in ALLOWED_USERS:
+    st.error(f"הגישה למשתמש {user_info.get('email')} חסומה.")
+    if st.button("התנתק"):
+        authenticator.logout()
+    st.stop()
+
+# ===============================
+# 2. הגדרות דף ו-CSS
 # ===============================
 st.set_page_config(page_title="ארנק קופונים חכם", page_icon="🎫", layout="wide")
 
-# ===============================
-# CSS – RTL & Mobile Fixes
-# ===============================
 st.markdown("""
 <style>
     [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stSidebar"] {
@@ -65,22 +93,19 @@ try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(worksheet="Sheet1", ttl=0)
     
-    # נירמול עמודות
     df.columns = [col.strip().lower() for col in df.columns]
     column_mapping = {'notes': 'note', 'status': 'sstatus'}
     df = df.rename(columns=column_mapping)
     
-    # הבטחת עמודות חובה
     required = ["network", "value", "code_or_link", "expiry", "cvv", "note", "sstatus"]
     for col in required:
         if col not in df.columns: df[col] = ""
             
-    # הגדרת ברירת מחדל לסטטוס
     df["sstatus"] = df["sstatus"].replace("", "פעיל").fillna("פעיל")
     df = df.fillna("")
             
 except Exception as e:
-    st.error(f"שגיאה בחיבור: {e}")
+    st.error(f"שגיאה בחיבור לנתונים: {e}")
     st.stop()
 
 def save_to_sheets(target_df):
@@ -88,15 +113,15 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# Manage Expand/Collapse State
+# Sidebar & Navigation
 # ===============================
-if "expand_all" not in st.session_state:
-    st.session_state.expand_all = True
-
-# ===============================
-# Navigation
-# ===============================
-page = st.sidebar.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
+with st.sidebar:
+    st.image(user_info.get('picture', ''), width=70)
+    st.write(f"שלום, **{user_info.get('name')}**")
+    page = st.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
+    if st.button("🚪 התנתקות"):
+        authenticator.logout()
+        st.rerun()
 
 # ===============================
 # Page: Add Coupon
@@ -130,7 +155,10 @@ else:
     
     st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון קופונים")
     
-    # כפתורי שליטה גלובליים: כווץ / הרחב
+    # ניהול מצב פתיחה/סגירה
+    if "expand_all" not in st.session_state:
+        st.session_state.expand_all = True
+
     col_btn1, col_btn2 = st.columns(2)
     if col_btn1.button("↔️ הרחב הכל"):
         st.session_state.expand_all = True
@@ -139,7 +167,6 @@ else:
         st.session_state.expand_all = False
         st.rerun()
 
-    # סינון נתונים
     df["amount_calc"] = df["value"].apply(parse_amount)
     display_df = df[df["sstatus"].str.strip() == target_status].copy()
     
@@ -153,13 +180,11 @@ else:
     
     for net in networks:
         net_df = display_df[display_df["network"] == net]
-        # שימוש ב-Session State כדי לשלוט על הפתיחה/סגירה
         with st.expander(f"📦 {net} ({len(net_df)})", expanded=st.session_state.expand_all):
             for i, row in net_df.iterrows():
                 exp_dt = parse_expiry(row["expiry"])
                 color = "#28a745" if target_status == "פעיל" else "#6c757d"
                 
-                # צבע לפי דחיפות תוקף
                 if target_status == "פעיל" and exp_dt:
                     days = (exp_dt - date.today()).days
                     if days < 0: color = "#ff4b4b"
@@ -188,7 +213,6 @@ else:
                         st.rerun()
                 with b2:
                     with st.popover("✏️"):
-                        # (כאן נמצא קוד העריכה שבו משתמשים בעדכון השורות)
                         u_val = st.text_input("ערך", value=row['value'], key=f"u_v_{i}")
                         if st.button("עדכן", key=f"upd_{i}"):
                             df.at[i, "value"] = u_val
