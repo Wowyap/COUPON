@@ -3,71 +3,75 @@ import pandas as pd
 import re
 from datetime import datetime, date
 from streamlit_gsheets import GSheetsConnection
-from streamlit_google_auth import Authenticate
-from inspect import signature
+from streamlit_oauth import OAuth2Component
 
 # ===============================
-# 1. אימות משתמש (Google Login)
+# 1. הגדרות Google OAuth
 # ===============================
-# ===============================
-# 1. אימות משתמש (Google Login)
-# ===============================
-authenticator = Authenticate(
-    client_id=st.secrets["google_client_id"],
-    client_secret=st.secrets["google_client_secret"],
-    redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
-    cookie_name="coupon_wallet_cookie",
-    cookie_password=st.secrets["secret_key"],
-    cookie_expiry_days=30
-)
+CLIENT_ID = st.secrets["google_client_id"]
+CLIENT_SECRET = st.secrets["google_client_secret"]
+AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+REFRESH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+REVOKE_TOKEN_URL = "https://oauth2.googleapis.com/revoke"
+REDIRECT_URI = "https://coupon-urtpmar277awmwda4z3vdw.streamlit.app"
+SCOPE = "openid email profile"
 
-# בדיקת מצב התחברות
-authenticator.check_authenticator()
+# יצירת רכיב האימות
+oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, REFRESH_TOKEN_URL, REVOKE_TOKEN_URL)
 
-if not st.session_state.get('connected'):
-    st.markdown("<h2 style='text-align:center; direction:rtl;'>כניסה לארנק קופונים</h2>", unsafe_allow_html=True)
-    authenticator.login()
+if "auth" not in st.session_state:
+    # הצגת כפתור התחברות
+    result = oauth2.authorize_button(
+        name="התחבר עם Google",
+        icon="https://www.google.com/favicon.ico",
+        redirect_uri=REDIRECT_URI,
+        scope=SCOPE,
+        key="google_auth",
+    )
+    if result:
+        st.session_state["auth"] = result
+        st.rerun()
     st.stop()
+
+# שליפת נתוני המשתמש מגוגל
+if "user_email" not in st.session_state:
+    import requests
+    token = st.session_state["auth"]["access_token"]
+    resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo", 
+                        headers={"Authorization": f"Bearer {token}"})
+    user_info = resp.json()
+    st.session_state["user_email"] = user_info.get("email")
+    st.session_state["user_name"] = user_info.get("name")
 
 # אבטחה: רק המייל שלך מורשה
 ALLOWED_USERS = ["eyalicohen@gmail.com"] # <--- שנה למייל שלך!
-user_info = st.session_state.get('user_info', {})
-if user_info.get('email') not in ALLOWED_USERS:
-    st.error(f"הגישה למשתמש {user_info.get('email')} חסומה.")
+if st.session_state["user_email"] not in ALLOWED_USERS:
+    st.error(f"הגישה למשתמש {st.session_state['user_email']} חסומה.")
     if st.button("התנתק"):
-        authenticator.logout()
+        del st.session_state["auth"]
+        st.rerun()
     st.stop()
 
 # ===============================
-# 2. הגדרות דף ו-CSS
+# 2. הגדרות דף ו-CSS (RTL)
 # ===============================
 st.set_page_config(page_title="ארנק קופונים חכם", page_icon="🎫", layout="wide")
 
 st.markdown("""
 <style>
     [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stSidebar"] {
-        direction: rtl;
-        text-align: right;
+        direction: rtl; text-align: right;
     }
     .coupon-card {
-        padding: 15px;
-        border-radius: 12px;
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        margin-bottom: 12px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        width: 100%;
-        box-sizing: border-box;
+        padding: 15px; border-radius: 12px; background-color: #ffffff;
+        border: 1px solid #e0e0e0; margin-bottom: 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05); width: 100%; box-sizing: border-box;
     }
     .code-container {
-        direction: ltr !important;
-        text-align: left !important;
-        background: #f8f9fa;
-        padding: 10px;
-        border-radius: 6px;
-        font-family: monospace;
-        word-break: break-all;
-        margin-top: 10px;
+        direction: ltr !important; text-align: left !important;
+        background: #f8f9fa; padding: 10px; border-radius: 6px;
+        font-family: monospace; word-break: break-all; margin-top: 10px;
         border: 1px dashed #adb5bd;
     }
     .stButton button { width: 100%; }
@@ -75,7 +79,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===============================
-# 3. עזרים וטעינת נתונים
+# 3. פונקציות עזר וטעינת נתונים
 # ===============================
 def parse_amount(val):
     try:
@@ -107,18 +111,17 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# 4. תפריט צד
+# 4. ניווט
 # ===============================
 with st.sidebar:
-    if user_info.get('picture'): st.image(user_info.get('picture'), width=70)
-    st.write(f"שלום, **{user_info.get('name')}**")
+    st.write(f"שלום, **{st.session_state['user_name']}**")
     page = st.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
     if st.button("🚪 התנתק"):
-        authenticator.logout()
+        del st.session_state["auth"]
         st.rerun()
 
 # ===============================
-# 5. דפי האפליקציה
+# 5. דפי האפליקציה (הוספה/ארנק)
 # ===============================
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
@@ -138,7 +141,6 @@ if page == "➕ הוספת קופון":
                 save_to_sheets(df)
                 st.success("נשמר!")
                 st.rerun()
-
 else:
     is_archive = (page == "📁 ארכיון (נוצלו)")
     target_status = "נוצל" if is_archive else "פעיל"
@@ -153,7 +155,7 @@ else:
     display_df = df[df["sstatus"].str.strip() == target_status].copy()
     st.info(f"💰 **סה\"כ:** ₪ {display_df['amount_calc'].sum():,.0f} | {len(display_df)} קופונים")
 
-    search = st.text_input("🔍 חיפוש...")
+    search = st.text_input("🔍 חיפוש מהיר...")
     if search: display_df = display_df[display_df.apply(lambda r: search.lower() in str(r).lower(), axis=1)]
 
     for net in sorted(display_df["network"].unique()):
@@ -167,17 +169,14 @@ else:
                     if days < 0: color = "#ff4b4b"
                     elif days <= 14: color = "#ffa500"
 
-                cvv_val = f" | CVV: {row['cvv']}" if row['cvv'] else ""
-                note_val = f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""
-                
                 st.markdown(f"""
                 <div class="coupon-card" style="border-right: 6px solid {color};">
                     <div style="display:flex; justify-content:space-between;">
-                        <div style="font-weight:bold;">{row['value']}{cvv_val}</div>
+                        <div style="font-weight:bold;">{row['value']}{f" | CVV: {row['cvv']}" if row['cvv'] else ""}</div>
                         <div style="font-size:0.85rem; color:#666;">תוקף: {row['expiry']}</div>
                     </div>
                     <div class="code-container">{row['code_or_link']}</div>
-                    {note_val}
+                    {f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""}
                 </div>
                 """, unsafe_allow_html=True)
 
