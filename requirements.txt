@@ -3,3 +3,5 @@ openpyxl
 streamlit>=1.34.0
 fpdf
 streamlit-google-auth
+streamlit-gsheets-connection
+streamlit-authenticator
