@@ -34,22 +34,50 @@ if "auth" not in st.session_state:
         st.rerun()
     st.stop()
 
-# שליפת נתוני המשתמש מגוגל
+# שליפת נתוני המשתמש מגוגל (גרסה מתוקנת ובטוחה)
 if "user_email" not in st.session_state:
+    # בדיקה שהאימות אכן החזיר מידע תקין
+    auth_data = st.session_state.get("auth")
+    
+    if not auth_data or "access_token" not in auth_data:
+        st.error("התקבל מידע חלקי או שגוי מגוגל. נסה להתחבר שוב.")
+        # הצגה זמנית של השגיאה לצורך דיבוג (אופציונלי)
+        st.write("Debug info:", auth_data) 
+        
+        if st.button("נקה נתונים ונסה שוב"):
+            if "auth" in st.session_state:
+                del st.session_state["auth"]
+            st.rerun()
+        st.stop()
+
+    # אם הגענו לכאן - יש טוקן תקין
     import requests
-    token = st.session_state["auth"]["access_token"]
-    resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo", 
-                        headers={"Authorization": f"Bearer {token}"})
-    user_info = resp.json()
-    st.session_state["user_email"] = user_info.get("email")
-    st.session_state["user_name"] = user_info.get("name")
+    token = auth_data["access_token"]
+    
+    try:
+        resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo", 
+                            headers={"Authorization": f"Bearer {token}"})
+        resp.raise_for_status() # בדיקה שהבקשה הצליחה
+        user_info = resp.json()
+        
+        st.session_state["user_email"] = user_info.get("email")
+        st.session_state["user_name"] = user_info.get("name")
+        st.rerun() # רענון כדי להעלים את כפתור ההתחברות
+        
+    except Exception as e:
+        st.error(f"שגיאה בשליפת פרטי המשתמש: {e}")
+        if st.button("נסה שוב"):
+            del st.session_state["auth"]
+            st.rerun()
+        st.stop()
 
 # אבטחה: רק המייל שלך מורשה
-ALLOWED_USERS = ["eyalicohen@gmail.com"] # <--- שנה למייל שלך!
-if st.session_state["user_email"] not in ALLOWED_USERS:
-    st.error(f"הגישה למשתמש {st.session_state['user_email']} חסומה.")
+ALLOWED_USERS = ["your-email@gmail.com"] # <--- וודא שהמייל שלך מעודכן כאן!
+if st.session_state.get("user_email") not in ALLOWED_USERS:
+    st.error(f"הגישה למשתמש {st.session_state.get('user_email')} חסומה.")
     if st.button("התנתק"):
-        del st.session_state["auth"]
+        if "auth" in st.session_state: del st.session_state["auth"]
+        if "user_email" in st.session_state: del st.session_state["user_email"]
         st.rerun()
     st.stop()
 
