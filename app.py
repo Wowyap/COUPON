@@ -15,7 +15,8 @@ AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REFRESH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_TOKEN_URL = "https://oauth2.googleapis.com/revoke"
-REDIRECT_URI = "https://coupon-urtpmar277awmwda4z3vdw.streamlit.app"
+REDIRECT_URI = "https://coupon-urtpmar277awmwda4z3vdw.stream
+lit.app"
 SCOPE = "openid email profile"
 
 # יצירת רכיב האימות
@@ -71,7 +72,7 @@ if "user_email" not in st.session_state:
 # ===============================
 # 2. אבטחה והרשאות
 # ===============================
-ALLOWED_USERS = ["eyalicohen@gmail.com"] # המייל שלך מעודכן כאן!
+  ALLOWED_USERS = ["eyalicohen@gmail.com", "rachelcohen144@gmail.com"]    # המייל שלך מעודכן כאן!
 
 current_email = st.session_state.get("user_email")
 if current_email not in ALLOWED_USERS:
