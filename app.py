@@ -70,21 +70,21 @@ def is_url(string):
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(worksheet="Sheet1", ttl=0)
-    df = df.fillna("")
     
-    # וידוא עמודות נדרשות (למקרה שהגיליון חדש)
-    required = ["network", "value", "code_or_link", "expiry", "cvv", "note", "status"]
-    for col in required:
-        if col not in df.columns:
-            df[col] = ""
+    # --- התיקון הקריטי כאן ---
+    # אם העמודה ריקה, נשים "פעיל" כברירת מחדל כדי שהקופונים לא ייעלמו
+    if "sstatus" in df.columns:
+        df["sstatus"] = df["sstatus"].replace("", "פעיל").fillna("פעיל")
+    else:
+        df["sstatus"] = "פעיל"
+    
+    df = df.fillna("")
             
 except Exception as e:
     st.error(f"שגיאה בחיבור: {e}")
     st.stop()
 
-# פונקציית שמירה מסודרת
 def save_to_sheets(target_df):
-    # הסרת עמודת חישוב זמנית לפני השמירה
     final_df = target_df.drop(columns=["amount_calc"], errors="ignore").reset_index(drop=True)
     conn.update(worksheet="Sheet1", data=final_df)
 
@@ -116,7 +116,7 @@ if page == "➕ הוספת קופון":
                     "network": network, "value": value, 
                     "expiry": expiry_date.strftime("%d/%m/%Y"),
                     "code_or_link": link, "cvv": cvv, 
-                    "note": note, "status": "פעיל"
+                    "note": note, "sstatus": "פעיל"
                 }])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_to_sheets(df)
@@ -134,9 +134,9 @@ else:
     
     st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון קופונים")
     
-    # חישוב שווי וסינון לפי הסטטוס בגיליון
     df["amount_calc"] = df["value"].apply(parse_amount)
-    display_df = df[df["status"] == target_status].copy()
+    # סינון לפי הסטטוס
+    display_df = df[df["sstatus"] == target_status].copy()
     
     total_val = display_df["amount_calc"].sum()
     st.info(f"💰 **סה\"כ:** ₪ {total_val:,.0f} | {len(display_df)} קופונים")
@@ -159,7 +159,6 @@ else:
                     if days < 0: color = "#ff4b4b"
                     elif days <= 14: color = "#ffa500"
 
-                # כרטיסייה עם CVV והערות
                 cvv_txt = f" | CVV: {row['cvv']}" if row['cvv'] else ""
                 note_txt = f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""
                 
@@ -174,17 +173,16 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # כפתורי פעולה
                 b1, b2, b3 = st.columns([1, 1, 1])
                 
-                with b1: # כפתור שינוי סטטוס (במקום מחיקה)
+                with b1:
                     label = "⏪ החזר" if is_archive else "✅ מומש"
                     if st.button(label, key=f"stat_{i}"):
-                        df.at[i, "status"] = "פעיל" if is_archive else "נוצל"
+                        df.at[i, "sstatus"] = "פעיל" if is_archive else "נוצל"
                         save_to_sheets(df)
                         st.rerun()
                 
-                with b2: # עריכה
+                with b2:
                     with st.popover("✏️"):
                         u_net = st.text_input("רשת", value=row['network'], key=f"u_n_{i}")
                         u_val = st.text_input("ערך", value=row['value'], key=f"u_v_{i}")
@@ -198,7 +196,7 @@ else:
                             save_to_sheets(df)
                             st.rerun()
 
-                with b3: # מחיקה סופית (רק אם באמת צריך)
+                with b3:
                     if st.button("🗑️", key=f"del_{i}"):
                         df = df.drop(i)
                         save_to_sheets(df)
