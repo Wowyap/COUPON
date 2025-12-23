@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import requests
 from datetime import datetime, date
 from streamlit_gsheets import GSheetsConnection
 from streamlit_oauth import OAuth2Component
@@ -20,7 +21,9 @@ SCOPE = "openid email profile"
 # יצירת רכיב האימות
 oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, REFRESH_TOKEN_URL, REVOKE_TOKEN_URL)
 
-if "auth" not in st.session_state:
+# בדיקה אם המשתמש כבר מחובר (דרך Session)
+if "user_email" not in st.session_state:
+    
     # הצגת כפתור התחברות
     result = oauth2.authorize_button(
         name="התחבר עם Google",
@@ -29,60 +32,59 @@ if "auth" not in st.session_state:
         scope=SCOPE,
         key="google_auth",
     )
+    
     if result:
-        st.session_state["auth"] = result
-        st.rerun()
+        # בדיקה האם התקבל מידע תקין
+        try:
+            # === התיקון הגדול: חילוץ הטוקן מהמקום הנכון ===
+            if "token" in result:
+                access_token = result["token"]["access_token"]
+            elif "access_token" in result:
+                access_token = result["access_token"]
+            else:
+                st.error("לא התקבל טוקן גישה מגוגל. נסה שוב.")
+                st.stop()
+            
+            # שימוש בטוקן כדי לקבל את פרטי המשתמש
+            user_info_url = "https://www.googleapis.com/oauth2/v2/userinfo"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            resp = requests.get(user_info_url, headers=headers)
+            resp.raise_for_status()
+            
+            user_data = resp.json()
+            st.session_state["user_email"] = user_data.get("email")
+            st.session_state["user_name"] = user_data.get("name")
+            st.session_state["user_picture"] = user_data.get("picture")
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"שגיאה בעיבוד הנתונים מגוגל: {e}")
+            # כפתור לניקוי במקרה של תקלה
+            if st.button("נסה שוב"):
+                del st.session_state["google_auth"]
+                st.rerun()
+            st.stop()
+    
+    # אם לא לחצו או לא מחוברים - עוצרים כאן
     st.stop()
 
-# שליפת נתוני המשתמש מגוגל (גרסה מתוקנת ובטוחה)
-if "user_email" not in st.session_state:
-    # בדיקה שהאימות אכן החזיר מידע תקין
-    auth_data = st.session_state.get("auth")
-    
-    if not auth_data or "access_token" not in auth_data:
-        st.error("התקבל מידע חלקי או שגוי מגוגל. נסה להתחבר שוב.")
-        # הצגה זמנית של השגיאה לצורך דיבוג (אופציונלי)
-        st.write("Debug info:", auth_data) 
-        
-        if st.button("נקה נתונים ונסה שוב"):
-            if "auth" in st.session_state:
-                del st.session_state["auth"]
-            st.rerun()
-        st.stop()
+# ===============================
+# 2. אבטחה והרשאות
+# ===============================
+ALLOWED_USERS = ["eyalicohen@gmail.com"] # המייל שלך מעודכן כאן!
 
-    # אם הגענו לכאן - יש טוקן תקין
-    import requests
-    token = auth_data["access_token"]
-    
-    try:
-        resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo", 
-                            headers={"Authorization": f"Bearer {token}"})
-        resp.raise_for_status() # בדיקה שהבקשה הצליחה
-        user_info = resp.json()
-        
-        st.session_state["user_email"] = user_info.get("email")
-        st.session_state["user_name"] = user_info.get("name")
-        st.rerun() # רענון כדי להעלים את כפתור ההתחברות
-        
-    except Exception as e:
-        st.error(f"שגיאה בשליפת פרטי המשתמש: {e}")
-        if st.button("נסה שוב"):
-            del st.session_state["auth"]
-            st.rerun()
-        st.stop()
-
-# אבטחה: רק המייל שלך מורשה
-ALLOWED_USERS = ["your-email@gmail.com"] # <--- וודא שהמייל שלך מעודכן כאן!
-if st.session_state.get("user_email") not in ALLOWED_USERS:
-    st.error(f"הגישה למשתמש {st.session_state.get('user_email')} חסומה.")
+current_email = st.session_state.get("user_email")
+if current_email not in ALLOWED_USERS:
+    st.error(f"הגישה למשתמש {current_email} אינה מורשית.")
     if st.button("התנתק"):
-        if "auth" in st.session_state: del st.session_state["auth"]
-        if "user_email" in st.session_state: del st.session_state["user_email"]
+        for key in ["user_email", "user_name", "google_auth"]:
+            if key in st.session_state:
+                del st.session_state[key]
         st.rerun()
     st.stop()
 
 # ===============================
-# 2. הגדרות דף ו-CSS (RTL)
+# 3. הגדרות דף ו-CSS
 # ===============================
 st.set_page_config(page_title="ארנק קופונים חכם", page_icon="🎫", layout="wide")
 
@@ -107,7 +109,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===============================
-# 3. פונקציות עזר וטעינת נתונים
+# 4. עזרים וטעינת נתונים
 # ===============================
 def parse_amount(val):
     try:
@@ -126,12 +128,13 @@ try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     df.columns = [col.strip().lower() for col in df.columns]
     df = df.rename(columns={'notes': 'note', 'status': 'sstatus'})
-    for col in ["network", "value", "code_or_link", "expiry", "cvv", "note", "sstatus"]:
+    required = ["network", "value", "code_or_link", "expiry", "cvv", "note", "sstatus"]
+    for col in required:
         if col not in df.columns: df[col] = ""
     df["sstatus"] = df["sstatus"].replace("", "פעיל").fillna("פעיל")
     df = df.fillna("")
 except Exception as e:
-    st.error(f"שגיאה בחיבור: {e}")
+    st.error(f"שגיאה בחיבור ל-Google Sheets: {e}")
     st.stop()
 
 def save_to_sheets(target_df):
@@ -139,17 +142,24 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# 4. ניווט
+# 5. ניווט
 # ===============================
 with st.sidebar:
-    st.write(f"שלום, **{st.session_state['user_name']}**")
+    if "user_picture" in st.session_state:
+        st.image(st.session_state["user_picture"], width=70)
+    st.write(f"שלום, **{st.session_state.get('user_name')}**")
+    
     page = st.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
+    
+    st.write("---")
     if st.button("🚪 התנתק"):
-        del st.session_state["auth"]
+        for key in ["user_email", "user_name", "google_auth", "user_picture"]:
+            if key in st.session_state:
+                del st.session_state[key]
         st.rerun()
 
 # ===============================
-# 5. דפי האפליקציה (הוספה/ארנק)
+# 6. דפי האפליקציה
 # ===============================
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
@@ -197,14 +207,17 @@ else:
                     if days < 0: color = "#ff4b4b"
                     elif days <= 14: color = "#ffa500"
 
+                cvv_v = f" | CVV: {row['cvv']}" if row['cvv'] else ""
+                note_v = f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""
+                
                 st.markdown(f"""
                 <div class="coupon-card" style="border-right: 6px solid {color};">
                     <div style="display:flex; justify-content:space-between;">
-                        <div style="font-weight:bold;">{row['value']}{f" | CVV: {row['cvv']}" if row['cvv'] else ""}</div>
+                        <div style="font-weight:bold;">{row['value']}{cvv_v}</div>
                         <div style="font-size:0.85rem; color:#666;">תוקף: {row['expiry']}</div>
                     </div>
                     <div class="code-container">{row['code_or_link']}</div>
-                    {f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""}
+                    {note_v}
                 </div>
                 """, unsafe_allow_html=True)
 
