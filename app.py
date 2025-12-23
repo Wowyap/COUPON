@@ -29,15 +29,15 @@ if missing:
 else:
     st.success("✅ כל המפתחות נמצאו!")
 
-# ניסיון הפעלת האימות
+# ניסיון הפעלת האימות עם שמות המשתנים המעודכנים
 try:
     authenticator = Authenticate(
-        secret_key=st.secrets["secret_key"],
-        cookie_name='coupon_wallet_cookie',
-        cookie_expiry_days=30,
         client_id=st.secrets["google_client_id"],
         client_secret=st.secrets["google_client_secret"],
         redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
+        cookie_password=st.secrets["secret_key"], # כאן השתנה השם מ-secret_key ל-cookie_password
+        cookie_name='coupon_wallet_cookie',
+        cookie_expiry_days=30,
     )
 except Exception as e:
     st.error(f"שגיאה בהפעלת האימות: {e}")
