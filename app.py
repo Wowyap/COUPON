@@ -175,4 +175,106 @@ def save_to_sheets(target_df):
 # ===============================
 with st.sidebar:
     if "user_picture" in st.session_state:
-        st.image(
+        st.image(st.session_state["user_picture"], width=60)
+    st.markdown(f"### {st.session_state.get('user_name')}")
+    
+    page = st.radio("תפריט:", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
+    
+    st.write("---")
+    if st.button("🚪 התנתק"):
+        st.session_state.clear()
+        st.rerun()
+
+# ===============================
+# 7. לוגיקה ותצוגה
+# ===============================
+if page == "➕ הוספת קופון":
+    st.header("➕ הוספת קופון")
+    with st.form("add_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        network = col1.text_input("רשת / חנות")
+        value = col2.text_input("ערך (לדוגמה: 100)")
+        expiry_date = st.date_input("תוקף", min_value=date.today())
+        cvv = st.text_input("CVV")
+        link = st.text_input("קוד / לינק")
+        note = st.text_area("הערות")
+        
+        if st.form_submit_button("💾 שמור"):
+            if network and value:
+                new_row = pd.DataFrame([{
+                    "network": network, "value": value, 
+                    "expiry": expiry_date.strftime("%d/%m/%Y"),
+                    "code_or_link": link, "cvv": cvv, "note": note, "sstatus": "פעיל"
+                }])
+                df = pd.concat([df, new_row], ignore_index=True)
+                save_to_sheets(df)
+                st.toast("נשמר בהצלחה!", icon="✅")
+                st.rerun()
+            else:
+                st.warning("חובה למלא רשת וערך")
+
+else:
+    is_archive = (page == "📁 ארכיון (נוצלו)")
+    target_status = "נוצל" if is_archive else "פעיל"
+    st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון")
+    
+    # כפתורי שליטה (ברירת מחדל: מכווץ)
+    c1, c2 = st.columns(2)
+    if "expand_all" not in st.session_state: st.session_state.expand_all = False
+    if c1.button("📂 הרחב הכל"): st.session_state.expand_all = True; st.rerun()
+    if c2.button("📁 כווץ הכל"): st.session_state.expand_all = False; st.rerun()
+
+    df["amount_calc"] = df["value"].apply(parse_amount)
+    display_df = df[df["sstatus"].str.strip() == target_status].copy()
+    
+    st.info(f"💰 **סה\"כ:** ₪ {display_df['amount_calc'].sum():,.0f} ({len(display_df)} קופונים)")
+
+    search = st.text_input("🔍 חיפוש...")
+    if search: display_df = display_df[display_df.apply(lambda r: search.lower() in str(r).lower(), axis=1)]
+
+    networks = sorted(display_df["network"].unique())
+    if not networks: st.info("אין נתונים להצגה.")
+
+    for net in networks:
+        net_df = display_df[display_df["network"] == net]
+        # נפתח רק אם ביקשנו הרחבה או שיש חיפוש
+        opened = st.session_state.expand_all or (search != "")
+        
+        with st.expander(f"📦 {net} ({len(net_df)})", expanded=opened):
+            for i, row in net_df.iterrows():
+                exp_dt = parse_expiry(row["expiry"])
+                color = "#28a745"
+                txt_exp = row['expiry']
+                
+                if target_status == "פעיל" and exp_dt:
+                    days = (exp_dt - date.today()).days
+                    if days < 0: color = "#ff4b4b"; txt_exp += " (פג!)"
+                    elif days <= 14: color = "#ffa500"
+
+                cvv_txt = f" | 🔒 {row['cvv']}" if row['cvv'] else ""
+                note_html = f"<div style='margin-top:5px; color:#666; font-size:0.9em;'>📝 {row['note']}</div>" if row['note'] else ""
+                
+                st.markdown(f"""
+                <div class="coupon-card" style="border-right: 6px solid {color};">
+                    <div style="display:flex; justify-content:space-between; font-weight:bold;">
+                        <span>💎 {row['value']} {cvv_txt}</span>
+                        <span style="font-size:0.85em; background:#f1f3f5; padding:2px 5px; border-radius:4px;">📅 {txt_exp}</span>
+                    </div>
+                    <div class="code-container" onclick="navigator.clipboard.writeText('{row['code_or_link']}'); alert('הועתק!')">{row['code_or_link']}</div>
+                    {note_html}
+                </div>
+                """, unsafe_allow_html=True)
+
+                b1, b2, b3 = st.columns([1,1,1])
+                lbl = "⏪ החזר" if is_archive else "✅ מומש"
+                if b1.button(lbl, key=f"s{i}"):
+                    df.at[i, "sstatus"] = "פעיל" if is_archive else "נוצל"
+                    save_to_sheets(df); st.toast("סטטוס עודכן"); st.rerun()
+                
+                with b2.popover("✏️"):
+                    uv = st.text_input("ערך", row['value'], key=f"e{i}")
+                    if st.button("שמור", key=f"bu{i}"):
+                        df.at[i, "value"] = uv; save_to_sheets(df); st.rerun()
+                
+                if b3.button("🗑️", key=f"d{i}"):
+                    df = df.drop(i); save_to_sheets(df); st.toast("נמחק"); st.rerun()
