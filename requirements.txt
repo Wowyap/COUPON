@@ -2,4 +2,3 @@ pandas
 st-gsheets-connection
 openpyxl
 streamlit>=1.34.0
-fpdf
