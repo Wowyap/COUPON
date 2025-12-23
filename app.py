@@ -15,7 +15,7 @@ AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REFRESH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_TOKEN_URL = "https://oauth2.googleapis.com/revoke"
-REDIRECT_URI = "https://coupon-urtpmar277awmwda4z3vdw.stream
+REDIRECT_URI = "https://coupon-urtpmar277awmwda4z3vdw.stream.app
 lit.app"
 SCOPE = "openid email profile"
 
