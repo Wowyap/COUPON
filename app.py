@@ -58,26 +58,25 @@ def parse_expiry(val):
         return datetime.strptime(val_str, "%d/%m/%Y").date()
     except: return None
 
-def is_url(string):
-    try:
-        s = str(string).lower().strip()
-        return s.startswith(('http://', 'https://', 'www.'))
-    except: return False
-
 # ===============================
-# Load data
+# Load Data
 # ===============================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(worksheet="Sheet1", ttl=0)
     
-    # --- התיקון הקריטי כאן ---
-    # אם העמודה ריקה, נשים "פעיל" כברירת מחדל כדי שהקופונים לא ייעלמו
-    if "sstatus" in df.columns:
-        df["sstatus"] = df["sstatus"].replace("", "פעיל").fillna("פעיל")
-    else:
-        df["sstatus"] = "פעיל"
+    # נירמול עמודות
+    df.columns = [col.strip().lower() for col in df.columns]
+    column_mapping = {'notes': 'note', 'status': 'sstatus'}
+    df = df.rename(columns=column_mapping)
     
+    # הבטחת עמודות חובה
+    required = ["network", "value", "code_or_link", "expiry", "cvv", "note", "sstatus"]
+    for col in required:
+        if col not in df.columns: df[col] = ""
+            
+    # הגדרת ברירת מחדל לסטטוס
+    df["sstatus"] = df["sstatus"].replace("", "פעיל").fillna("פעיל")
     df = df.fillna("")
             
 except Exception as e:
@@ -89,7 +88,13 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# Sidebar Navigation
+# Manage Expand/Collapse State
+# ===============================
+if "expand_all" not in st.session_state:
+    st.session_state.expand_all = True
+
+# ===============================
+# Navigation
 # ===============================
 page = st.sidebar.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
 
@@ -99,31 +104,22 @@ page = st.sidebar.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
     with st.form("add_form", clear_on_submit=True):
-        col_r1, col_r2 = st.columns(2)
-        network = col_r1.text_input("רשת / חנות")
-        value = col_r2.text_input("ערך (לדוגמה: 100)")
-        
-        col_r3, col_r4 = st.columns(2)
-        expiry_date = col_r3.date_input("תוקף", min_value=date.today())
-        cvv = col_r4.text_input("CVV (אם יש)")
-        
+        col1, col2 = st.columns(2)
+        network = col1.text_input("רשת / חנות")
+        value = col2.text_input("ערך (לדוגמה: 100)")
+        expiry_date = st.date_input("תוקף", min_value=date.today())
+        cvv = st.text_input("CVV")
         link = st.text_input("קוד או קישור")
         note = st.text_area("הערות")
         
         if st.form_submit_button("שמור בארנק"):
             if network and value:
-                new_row = pd.DataFrame([{
-                    "network": network, "value": value, 
-                    "expiry": expiry_date.strftime("%d/%m/%Y"),
-                    "code_or_link": link, "cvv": cvv, 
-                    "note": note, "sstatus": "פעיל"
-                }])
+                new_row = pd.DataFrame([{"network": network, "value": value, "expiry": expiry_date.strftime("%d/%m/%Y"),
+                                         "code_or_link": link, "cvv": cvv, "note": note, "sstatus": "פעיל"}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_to_sheets(df)
-                st.success("נשמר בהצלחה!")
+                st.success("נשמר!")
                 st.rerun()
-            else:
-                st.warning("חובה למלא שם רשת וערך")
 
 # ===============================
 # Page: Wallet & Archive
@@ -134,14 +130,22 @@ else:
     
     st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון קופונים")
     
-    df["amount_calc"] = df["value"].apply(parse_amount)
-    # סינון לפי הסטטוס
-    display_df = df[df["sstatus"] == target_status].copy()
-    
-    total_val = display_df["amount_calc"].sum()
-    st.info(f"💰 **סה\"כ:** ₪ {total_val:,.0f} | {len(display_df)} קופונים")
+    # כפתורי שליטה גלובליים: כווץ / הרחב
+    col_btn1, col_btn2 = st.columns(2)
+    if col_btn1.button("↔️ הרחב הכל"):
+        st.session_state.expand_all = True
+        st.rerun()
+    if col_btn2.button("↕️ כווץ הכל"):
+        st.session_state.expand_all = False
+        st.rerun()
 
-    search = st.text_input("🔍 חיפוש...")
+    # סינון נתונים
+    df["amount_calc"] = df["value"].apply(parse_amount)
+    display_df = df[df["sstatus"].str.strip() == target_status].copy()
+    
+    st.info(f"💰 **סה\"כ:** ₪ {display_df['amount_calc'].sum():,.0f} | {len(display_df)} קופונים")
+
+    search = st.text_input("🔍 חיפוש מהיר...")
     if search:
         display_df = display_df[display_df.apply(lambda r: search.lower() in str(r).lower(), axis=1)]
 
@@ -149,11 +153,13 @@ else:
     
     for net in networks:
         net_df = display_df[display_df["network"] == net]
-        with st.expander(f"📦 {net} ({len(net_df)})", expanded=True):
+        # שימוש ב-Session State כדי לשלוט על הפתיחה/סגירה
+        with st.expander(f"📦 {net} ({len(net_df)})", expanded=st.session_state.expand_all):
             for i, row in net_df.iterrows():
                 exp_dt = parse_expiry(row["expiry"])
                 color = "#28a745" if target_status == "פעיל" else "#6c757d"
                 
+                # צבע לפי דחיפות תוקף
                 if target_status == "פעיל" and exp_dt:
                     days = (exp_dt - date.today()).days
                     if days < 0: color = "#ff4b4b"
@@ -174,28 +180,20 @@ else:
                 """, unsafe_allow_html=True)
 
                 b1, b2, b3 = st.columns([1, 1, 1])
-                
                 with b1:
                     label = "⏪ החזר" if is_archive else "✅ מומש"
                     if st.button(label, key=f"stat_{i}"):
                         df.at[i, "sstatus"] = "פעיל" if is_archive else "נוצל"
                         save_to_sheets(df)
                         st.rerun()
-                
                 with b2:
                     with st.popover("✏️"):
-                        u_net = st.text_input("רשת", value=row['network'], key=f"u_n_{i}")
+                        # (כאן נמצא קוד העריכה שבו משתמשים בעדכון השורות)
                         u_val = st.text_input("ערך", value=row['value'], key=f"u_v_{i}")
-                        u_exp = st.date_input("תוקף", value=exp_dt if exp_dt else date.today(), key=f"u_e_{i}")
-                        u_cvv = st.text_input("CVV", value=row['cvv'], key=f"u_c_{i}")
-                        u_link = st.text_input("קוד/לינק", value=row['code_or_link'], key=f"u_l_{i}")
-                        u_note = st.text_area("הערה", value=row['note'], key=f"u_nt_{i}")
                         if st.button("עדכן", key=f"upd_{i}"):
-                            df.at[i, ["network", "value", "code_or_link", "cvv", "note"]] = [u_net, u_val, u_link, u_cvv, u_note]
-                            df.at[i, "expiry"] = u_exp.strftime("%d/%m/%Y")
+                            df.at[i, "value"] = u_val
                             save_to_sheets(df)
                             st.rerun()
-
                 with b3:
                     if st.button("🗑️", key=f"del_{i}"):
                         df = df.drop(i)
