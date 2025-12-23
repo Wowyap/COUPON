@@ -27,7 +27,6 @@ st.markdown("""
     [data-testid="stHeader"] { background-color: rgba(255, 255, 255, 0.95); }
     
     /* === יישור לימין (RTL) לתוכן בלבד === */
-    /* זה מיישר את הטקסטים מבלי לשבור את התפריט של המובייל */
     .stMarkdown, .stButton, .stTextInput, .stDateInput, .stSelectbox, .stTextArea, [data-testid="stSidebar"] {
         direction: rtl; 
         text-align: right;
@@ -232,10 +231,17 @@ else:
 
     for net in networks:
         net_df = display_df[display_df["network"] == net]
+        
+        # === חישוב הסכום הכולל לקבוצה הנוכחית ===
+        group_total = net_df['amount_calc'].sum()
+        
         # נפתח רק אם ביקשנו הרחבה או שיש חיפוש
         opened = st.session_state.expand_all or (search != "")
         
-        with st.expander(f"📦 {net} ({len(net_df)})", expanded=opened):
+        # כותרת שכוללת גם את שם הרשת, כמות הקופונים והסכום הכולל
+        expander_title = f"📦 {net} ({len(net_df)}) | ₪ {group_total:,.0f}"
+        
+        with st.expander(expander_title, expanded=opened):
             for i, row in net_df.iterrows():
                 exp_dt = parse_expiry(row["expiry"])
                 color = "#28a745"
