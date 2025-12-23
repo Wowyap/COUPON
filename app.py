@@ -4,34 +4,34 @@ import re
 from datetime import datetime, date
 from streamlit_gsheets import GSheetsConnection
 from streamlit_google_auth import Authenticate
+from inspect import signature
 
 # ===============================
 # 1. אימות משתמש (Google Login)
 # ===============================
-# מנגנון גמיש למניעת TypeError - שולח גם secret_key וגם cookie_password
 auth_kwargs = {
     "client_id": st.secrets["google_client_id"],
     "client_secret": st.secrets["google_client_secret"],
     "redirect_uri": "https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
     "cookie_name": "coupon_wallet_cookie",
     "cookie_expiry_days": 30,
-    # שולחים את שניהם כדי שהספרייה תבחר מה שמתאים לה
     "secret_key": st.secrets["secret_key"],
     "cookie_password": st.secrets["secret_key"] 
 }
 
+# מנגנון הגנה להתאמה לגרסאות שונות של הספרייה
 try:
-    # ניסיון ראשון: המבנה החדש ביותר
-    authenticator = Authenticate(**auth_kwargs)
-except TypeError:
-    # ניסיון שני: אם המבנה הקודם נכשל, מנסים בלי הפרמטרים העודפים
-    from inspect import signature
     sig = signature(Authenticate.__init__)
     valid_params = [p for p in sig.parameters if p in auth_kwargs]
     filtered_kwargs = {k: auth_kwargs[k] for k in valid_params}
     authenticator = Authenticate(**filtered_kwargs)
+except Exception:
+    authenticator = Authenticate(
+        client_id=st.secrets["google_client_id"],
+        client_secret=st.secrets["google_client_secret"],
+        redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app"
+    )
 
-# בדיקת מצב התחברות
 authenticator.check_authenticator()
 
 if not st.session_state.get('connected'):
@@ -40,7 +40,7 @@ if not st.session_state.get('connected'):
     st.stop()
 
 # אבטחה: רק המייל שלך מורשה
-ALLOWED_USERS = ["your-email@gmail.com"] # <--- כאן שים את המייל שלך!
+ALLOWED_USERS = ["eyalicohen@gmail.com"] # <--- שנה למייל שלך!
 user_info = st.session_state.get('user_info', {})
 if user_info.get('email') not in ALLOWED_USERS:
     st.error(f"הגישה למשתמש {user_info.get('email')} חסומה.")
@@ -85,7 +85,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===============================
-# 3. פונקציות עזר (Helpers)
+# 3. עזרים וטעינת נתונים
 # ===============================
 def parse_amount(val):
     try:
@@ -99,9 +99,6 @@ def parse_expiry(val):
         return datetime.strptime(val_str, "%d/%m/%Y").date()
     except: return None
 
-# ===============================
-# 4. טעינת נתונים
-# ===============================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(worksheet="Sheet1", ttl=0)
@@ -120,7 +117,7 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# 5. ניווט
+# 4. תפריט צד
 # ===============================
 with st.sidebar:
     if user_info.get('picture'): st.image(user_info.get('picture'), width=70)
@@ -131,7 +128,7 @@ with st.sidebar:
         st.rerun()
 
 # ===============================
-# 6. דפי האפליקציה
+# 5. דפי האפליקציה
 # ===============================
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
@@ -151,6 +148,7 @@ if page == "➕ הוספת קופון":
                 save_to_sheets(df)
                 st.success("נשמר!")
                 st.rerun()
+
 else:
     is_archive = (page == "📁 ארכיון (נוצלו)")
     target_status = "נוצל" if is_archive else "פעיל"
@@ -179,6 +177,31 @@ else:
                     if days < 0: color = "#ff4b4b"
                     elif days <= 14: color = "#ffa500"
 
+                cvv_val = f" | CVV: {row['cvv']}" if row['cvv'] else ""
+                note_val = f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""
+                
                 st.markdown(f"""
                 <div class="coupon-card" style="border-right: 6px solid {color};">
-                    <div style="display
+                    <div style="display:flex; justify-content:space-between;">
+                        <div style="font-weight:bold;">{row['value']}{cvv_val}</div>
+                        <div style="font-size:0.85rem; color:#666;">תוקף: {row['expiry']}</div>
+                    </div>
+                    <div class="code-container">{row['code_or_link']}</div>
+                    {note_val}
+                </div>
+                """, unsafe_allow_html=True)
+
+                b1, b2, b3 = st.columns([1, 1, 1])
+                with b1:
+                    if st.button("⏪ החזר" if is_archive else "✅ מומש", key=f"stat_{i}"):
+                        df.at[i, "sstatus"] = "פעיל" if is_archive else "נוצל"
+                        save_to_sheets(df); st.rerun()
+                with b2:
+                    with st.popover("✏️"):
+                        u_val = st.text_input("ערך", value=row['value'], key=f"u_v_{i}")
+                        if st.button("עדכן", key=f"upd_{i}"):
+                            df.at[i, "value"] = u_val
+                            save_to_sheets(df); st.rerun()
+                with b3:
+                    if st.button("🗑️", key=f"del_{i}"):
+                        df = df.drop(i); save_to_sheets(df); st.rerun()
