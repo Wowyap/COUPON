@@ -9,29 +9,19 @@ from inspect import signature
 # ===============================
 # 1. אימות משתמש (Google Login)
 # ===============================
-auth_kwargs = {
-    "client_id": st.secrets["google_client_id"],
-    "client_secret": st.secrets["google_client_secret"],
-    "redirect_uri": "https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
-    "cookie_name": "coupon_wallet_cookie",
-    "cookie_expiry_days": 30,
-    "secret_key": st.secrets["secret_key"],
-    "cookie_password": st.secrets["secret_key"] 
-}
+# ===============================
+# 1. אימות משתמש (Google Login)
+# ===============================
+authenticator = Authenticate(
+    client_id=st.secrets["google_client_id"],
+    client_secret=st.secrets["google_client_secret"],
+    redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
+    cookie_name="coupon_wallet_cookie",
+    cookie_password=st.secrets["secret_key"],
+    cookie_expiry_days=30
+)
 
-# מנגנון הגנה להתאמה לגרסאות שונות של הספרייה
-try:
-    sig = signature(Authenticate.__init__)
-    valid_params = [p for p in sig.parameters if p in auth_kwargs]
-    filtered_kwargs = {k: auth_kwargs[k] for k in valid_params}
-    authenticator = Authenticate(**filtered_kwargs)
-except Exception:
-    authenticator = Authenticate(
-        client_id=st.secrets["google_client_id"],
-        client_secret=st.secrets["google_client_secret"],
-        redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app"
-    )
-
+# בדיקת מצב התחברות
 authenticator.check_authenticator()
 
 if not st.session_state.get('connected'):
