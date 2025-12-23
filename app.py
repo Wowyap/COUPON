@@ -8,30 +8,15 @@ from streamlit_google_auth import Authenticate
 # ===============================
 # 1. אימות משתמש (Google Login)
 # ===============================
-def initialize_auth():
-    try:
-        # ניסיון הגדרה לפי הגרסה העדכנית ביותר
-        auth = Authenticate(
-            client_id=st.secrets["google_client_id"],
-            client_secret=st.secrets["google_client_secret"],
-            redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
-            cookie_name='coupon_wallet_cookie',
-            cookie_password=st.secrets["secret_key"],
-            cookie_expiry_days=30,
-        )
-        return auth
-    except Exception:
-        # ניסיון הגדרה לפי גרסה ישנה יותר אם החדשה נכשלת
-        return Authenticate(
-            secret_key=st.secrets["secret_key"],
-            cookie_name='coupon_wallet_cookie',
-            cookie_expiry_days=30,
-            client_id=st.secrets["google_client_id"],
-            client_secret=st.secrets["google_client_secret"],
-            redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
-        )
-
-authenticator = initialize_auth()
+# הגדרה מותאמת לגרסה 1.3.0
+authenticator = Authenticate(
+    client_id=st.secrets["google_client_id"],
+    client_secret=st.secrets["google_client_secret"],
+    redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
+    cookie_name='coupon_wallet_cookie',
+    cookie_password=st.secrets["secret_key"], # כאן היה השינוי
+    cookie_expiry_days=30,
+)
 
 # בדיקת מצב התחברות
 authenticator.check_authenticator()
@@ -136,13 +121,13 @@ with st.sidebar:
     if user_info.get('picture'):
         st.image(user_info.get('picture'), width=70)
     st.write(f"שלום, **{user_info.get('name')}**")
-    page = st.sidebar.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
+    page = st.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
     if st.button("🚪 התנתק"):
         authenticator.logout()
         st.rerun()
 
 # ===============================
-# 6. דפי האפליקציה
+# 6. דפי האפליקציה (המשך רגיל)
 # ===============================
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
@@ -163,11 +148,9 @@ if page == "➕ הוספת קופון":
                 save_to_sheets(df)
                 st.success("נשמר!")
                 st.rerun()
-
 else:
     is_archive = (page == "📁 ארכיון (נוצלו)")
     target_status = "נוצל" if is_archive else "פעיל"
-    
     st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון")
     
     if "expand_all" not in st.session_state:
