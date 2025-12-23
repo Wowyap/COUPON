@@ -5,3 +5,4 @@ fpdf
 streamlit-google-auth
 streamlit-gsheets-connection
 streamlit-authenticator
+streamlit-oauth
