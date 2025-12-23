@@ -17,27 +17,36 @@ st.set_page_config(
 )
 
 # ===============================
-# 2. עיצוב (Light Mode + Mobile Fix)
+# 2. עיצוב CSS (מתוקן למובייל - ללא חסימות)
 # ===============================
 st.markdown("""
 <style>
-    /* כפיית מצב מואר */
+    /* === כפיית מצב מואר === */
     [data-testid="stAppViewContainer"] { background-color: #ffffff; color: #000000; }
     [data-testid="stSidebar"] { background-color: #f8f9fa; }
     [data-testid="stHeader"] { background-color: rgba(255, 255, 255, 0.95); }
     
-    /* כיוון RTL */
-    [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stSidebar"] {
+    /* === יישור לימין (RTL) לתוכן בלבד === */
+    /* זה מיישר את הטקסטים מבלי לשבור את התפריט של המובייל */
+    .stMarkdown, .stButton, .stTextInput, .stDateInput, .stSelectbox, .stTextArea, [data-testid="stSidebar"] {
         direction: rtl; 
         text-align: right;
     }
     
+    /* יישור כותרות */
+    h1, h2, h3, p, div {
+        text-align: right;
+    }
+
+    /* עיצוב כרטיס קופון */
     .coupon-card {
         padding: 15px; border-radius: 12px; background-color: #ffffff;
         border: 1px solid #e0e0e0; margin-bottom: 12px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        direction: rtl;
     }
     
+    /* קוד הקופון - תמיד משמאל לימין */
     .code-container {
         direction: ltr !important; text-align: left !important;
         background: #f1f3f5; color: #333; padding: 12px;
@@ -47,19 +56,13 @@ st.markdown("""
     
     .stButton button { width: 100%; }
 
-    /* תיקון למובייל */
-    @media (max-width: 768px) {
-        section[data-testid="stSidebar"] {
-            top: 0; height: 100vh; z-index: 999999;
-            width: 80% !important; max-width: 300px;
-        }
-        div[data-testid="stSidebarCollapsedControl"] { display: block; color: #000; }
-    }
+    /* הסתרת כפתור "מסך מלא" שמפריע בנייד */
+    [data-testid="stToolbar"] { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 # ===============================
-# 3. אימות מול גוגל (הלוגיקה המתוקנת)
+# 3. אימות מול גוגל
 # ===============================
 CLIENT_ID = st.secrets["google_client_id"]
 CLIENT_SECRET = st.secrets["google_client_secret"]
@@ -72,13 +75,9 @@ SCOPE = "openid email profile"
 
 oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, REFRESH_TOKEN_URL, REVOKE_TOKEN_URL)
 
-# בדיקה אם אנחנו כבר מחוברים ב-Session
 if "user_email" not in st.session_state:
-    
-    # הצגת כותרת
     st.markdown("<h3 style='text-align:center;'>התחברות לארנק קופונים 🔐</h3>", unsafe_allow_html=True)
     
-    # === התיקון: הרכיב חייב לרוץ תמיד כדי לתפוס את הקוד מגוגל ===
     result = oauth2.authorize_button(
         name="התחבר עם Google",
         icon="https://www.google.com/favicon.ico",
@@ -89,7 +88,6 @@ if "user_email" not in st.session_state:
     
     if result:
         try:
-            # חילוץ הטוקן
             if "token" in result:
                 access_token = result["token"]["access_token"]
             elif "access_token" in result:
@@ -98,7 +96,6 @@ if "user_email" not in st.session_state:
                 st.error("שגיאה: לא התקבל טוקן תקין.")
                 st.stop()
             
-            # שליפת פרטי משתמש
             user_info_url = "https://www.googleapis.com/oauth2/v2/userinfo"
             headers = {"Authorization": f"Bearer {access_token}"}
             resp = requests.get(user_info_url, headers=headers)
@@ -108,8 +105,6 @@ if "user_email" not in st.session_state:
             st.session_state["user_email"] = user_data.get("email")
             st.session_state["user_name"] = user_data.get("name")
             st.session_state["user_picture"] = user_data.get("picture")
-            
-            # רענון כדי להכנס למערכת
             st.rerun()
             
         except Exception as e:
@@ -118,7 +113,6 @@ if "user_email" not in st.session_state:
                 st.rerun()
             st.stop()
             
-    # אם לא מחוברים ולא חזרנו עם תוצאה - עוצרים כאן
     st.stop()
 
 # ===============================
@@ -176,6 +170,7 @@ def save_to_sheets(target_df):
 with st.sidebar:
     if "user_picture" in st.session_state:
         st.image(st.session_state["user_picture"], width=60)
+    
     st.markdown(f"### {st.session_state.get('user_name')}")
     
     page = st.radio("תפריט:", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
