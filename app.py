@@ -8,35 +8,41 @@ from streamlit_google_auth import Authenticate
 # ===============================
 # 1. אימות משתמש (Google Login)
 # ===============================
-authenticator = Authenticate(
-    secret_key=st.secrets["secret_key"],
-    cookie_name='coupon_wallet_cookie',
-    cookie_expiry_days=30,
-    client_id=st.secrets["google_client_id"],
-    client_secret=st.secrets["google_client_secret"],
-    redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
-)
+# ניסיון טעינת המפתחות מה-Secrets עם הגנה מפני קריסה
+try:
+    authenticator = Authenticate(
+        secret_key=st.secrets.get("secret_key"),
+        cookie_name='coupon_wallet_cookie',
+        cookie_expiry_days=30,
+        client_id=st.secrets.get("google_client_id"),
+        client_secret=st.secrets.get("google_client_secret"),
+        redirect_uri="https://coupon-urtpmar277awmwda4z3vdw.streamlit.app",
+    )
+except Exception as e:
+    st.error("שגיאה קריטית: המפתחות ב-Secrets לא מוגדרים נכון או חסרים.")
+    st.stop()
 
-# בדיקת מצב התחברות
+# בדיקת מצב התחברות (קוקיז)
 authenticator.check_authenticator()
 
-# אם לא מחובר - הצגת כפתור התחברות
+# הצגת מסך התחברות אם המשתמש לא מחובר
 if not st.session_state.get('connected'):
-    st.markdown("<h2 style='text-align:center; direction:rtl;'>ברוכים הבאים לארנק הקופונים</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center; direction:rtl;'>מערכת ארנק קופונים - נא להתחבר</h2>", unsafe_allow_html=True)
     authenticator.login()
     st.stop()
 
-# בדיקה שהמייל מורשה (הגנה מפני זרים)
-ALLOWED_USERS = ["eyalicohen@gmail.com"]  # <--- שנה למייל הג'ימייל שלך!
+# אבטחה: וידוא שהמייל המחובר מורשה לגשת
+ALLOWED_USERS = ["eyalicohen@gmail.com"]  # <--- שנה למייל שלך כאן!
 user_info = st.session_state.get('user_info', {})
+
 if user_info.get('email') not in ALLOWED_USERS:
-    st.error(f"הגישה למשתמש {user_info.get('email')} חסומה.")
+    st.error(f"למשתמש {user_info.get('email')} אין הרשאת גישה.")
     if st.button("התנתק"):
         authenticator.logout()
     st.stop()
 
 # ===============================
-# 2. הגדרות דף ו-CSS
+# 2. הגדרות דף ו-CSS (RTL)
 # ===============================
 st.set_page_config(page_title="ארנק קופונים חכם", page_icon="🎫", layout="wide")
 
@@ -72,7 +78,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ===============================
-# Helpers
+# 3. פונקציות עזר (Helpers)
 # ===============================
 def parse_amount(val):
     try:
@@ -87,16 +93,18 @@ def parse_expiry(val):
     except: return None
 
 # ===============================
-# Load Data
+# 4. טעינת נתונים מ-Google Sheets
 # ===============================
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(worksheet="Sheet1", ttl=0)
     
+    # נירמול עמודות
     df.columns = [col.strip().lower() for col in df.columns]
     column_mapping = {'notes': 'note', 'status': 'sstatus'}
     df = df.rename(columns=column_mapping)
     
+    # הבטחת עמודות חובה
     required = ["network", "value", "code_or_link", "expiry", "cvv", "note", "sstatus"]
     for col in required:
         if col not in df.columns: df[col] = ""
@@ -105,7 +113,7 @@ try:
     df = df.fillna("")
             
 except Exception as e:
-    st.error(f"שגיאה בחיבור לנתונים: {e}")
+    st.error(f"שגיאה בחיבור ל-Google Sheets: {e}")
     st.stop()
 
 def save_to_sheets(target_df):
@@ -113,18 +121,22 @@ def save_to_sheets(target_df):
     conn.update(worksheet="Sheet1", data=final_df)
 
 # ===============================
-# Sidebar & Navigation
+# 5. תפריט צד (Sidebar)
 # ===============================
 with st.sidebar:
-    st.image(user_info.get('picture', ''), width=70)
+    if user_info.get('picture'):
+        st.image(user_info.get('picture'), width=70)
     st.write(f"שלום, **{user_info.get('name')}**")
+    
     page = st.radio("ניווט", ["📂 הארנק שלי", "➕ הוספת קופון", "📁 ארכיון (נוצלו)"])
-    if st.button("🚪 התנתקות"):
+    
+    st.write("---")
+    if st.button("🚪 התנתק"):
         authenticator.logout()
         st.rerun()
 
 # ===============================
-# Page: Add Coupon
+# 6. דף: הוספת קופון
 # ===============================
 if page == "➕ הוספת קופון":
     st.header("➕ הוספת קופון חדש")
@@ -143,11 +155,11 @@ if page == "➕ הוספת קופון":
                                          "code_or_link": link, "cvv": cvv, "note": note, "sstatus": "פעיל"}])
                 df = pd.concat([df, new_row], ignore_index=True)
                 save_to_sheets(df)
-                st.success("נשמר!")
+                st.success("הקופון נשמר בהצלחה!")
                 st.rerun()
 
 # ===============================
-# Page: Wallet & Archive
+# 7. דף: ארנק וארכיון
 # ===============================
 else:
     is_archive = (page == "📁 ארכיון (נוצלו)")
@@ -155,7 +167,7 @@ else:
     
     st.header("🎫 הארנק שלי" if not is_archive else "📁 ארכיון קופונים")
     
-    # ניהול מצב פתיחה/סגירה
+    # מצב תצוגה
     if "expand_all" not in st.session_state:
         st.session_state.expand_all = True
 
@@ -167,14 +179,15 @@ else:
         st.session_state.expand_all = False
         st.rerun()
 
+    # עיבוד נתונים לתצוגה
     df["amount_calc"] = df["value"].apply(parse_amount)
     display_df = df[df["sstatus"].str.strip() == target_status].copy()
     
     st.info(f"💰 **סה\"כ:** ₪ {display_df['amount_calc'].sum():,.0f} | {len(display_df)} קופונים")
 
-    search = st.text_input("🔍 חיפוש מהיר...")
+    search = st.text_input("🔍 חיפוש לפי שם רשת...")
     if search:
-        display_df = display_df[display_df.apply(lambda r: search.lower() in str(r).lower(), axis=1)]
+        display_df = display_df[display_df['network'].str.contains(search, case=False, na=False)]
 
     networks = sorted(display_df["network"].unique())
     
@@ -185,10 +198,11 @@ else:
                 exp_dt = parse_expiry(row["expiry"])
                 color = "#28a745" if target_status == "פעיל" else "#6c757d"
                 
+                # התראה על תוקף
                 if target_status == "פעיל" and exp_dt:
                     days = (exp_dt - date.today()).days
-                    if days < 0: color = "#ff4b4b"
-                    elif days <= 14: color = "#ffa500"
+                    if days < 0: color = "#ff4b4b" # פג תוקף
+                    elif days <= 14: color = "#ffa500" # עומד לפוג
 
                 cvv_txt = f" | CVV: {row['cvv']}" if row['cvv'] else ""
                 note_txt = f"<div style='font-size:0.85rem; color:#555; margin-top:5px;'>📝 {row['note']}</div>" if row['note'] else ""
@@ -204,17 +218,18 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
+                # כפתורי פעולה
                 b1, b2, b3 = st.columns([1, 1, 1])
                 with b1:
-                    label = "⏪ החזר" if is_archive else "✅ מומש"
-                    if st.button(label, key=f"stat_{i}"):
+                    btn_label = "⏪ החזר" if is_archive else "✅ מומש"
+                    if st.button(btn_label, key=f"stat_{i}"):
                         df.at[i, "sstatus"] = "פעיל" if is_archive else "נוצל"
                         save_to_sheets(df)
                         st.rerun()
                 with b2:
                     with st.popover("✏️"):
-                        u_val = st.text_input("ערך", value=row['value'], key=f"u_v_{i}")
-                        if st.button("עדכן", key=f"upd_{i}"):
+                        u_val = st.text_input("עדכן ערך", value=row['value'], key=f"u_v_{i}")
+                        if st.button("אישור", key=f"upd_{i}"):
                             df.at[i, "value"] = u_val
                             save_to_sheets(df)
                             st.rerun()
