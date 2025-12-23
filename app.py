@@ -71,7 +71,8 @@ if "user_email" not in st.session_state:
 # ===============================
 # 2. אבטחה והרשאות
 # ===============================
-ALLOWED_USERS = ["eyalicohen@gmail.com"] # המייל שלך מעודכן כאן!
+#ALLOWED_USERS = ["eyalicohen@gmail.com"] # המייל שלך מעודכן כאן!
+ALLOWED_USERS = ["eyalicohen@gmail.com", "rachelcohen144@gmail.com"]
 
 current_email = st.session_state.get("user_email")
 if current_email not in ALLOWED_USERS:
